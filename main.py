@@ -12,7 +12,7 @@ from rss_fetcher import RssFetcher
 from weather_fetcher import WeatherFetcher
 from user_reports import UserReportStore
 from meshcore_client import MeshCoreClient
-from node_tracker import NodeTracker, location_to_coords
+from node_tracker import NodeTracker, location_to_coords as _county_coords
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +54,11 @@ async def main():
                 and event.event_type in settings.targeted_alerts.critical_event_types
                 and _mesh_ref
             ):
-                coords = location_to_coords(event.location or "")
+                # Use precise geocoded coords if available, fall back to county centre
+                if event.lat and event.lon:
+                    coords = (event.lat, event.lon)
+                else:
+                    coords = _county_coords(event.location or "")
                 if coords:
                     nearby = nodes.get_nodes_near(*coords, settings.targeted_alerts.radius_km)
                     if nearby:

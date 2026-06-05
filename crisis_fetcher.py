@@ -105,6 +105,8 @@ class CrisisFetcher:
                 title=item["title"],
                 description=" | ".join(item["alert_texts"])[:500] or None,
                 location=classified.location,
+                lat=None,
+                lon=None,
                 status=status,
                 start_time=item["start_time"],
                 end_time=item["end_time"],

@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS events (
     title       TEXT,
     description TEXT,
     location    TEXT,
+    lat         REAL,
+    lon         REAL,
     status      TEXT DEFAULT 'UNKNOWN',
     start_time  TEXT,
     end_time    TEXT,
@@ -35,6 +37,8 @@ class Event:
     title: Optional[str]
     description: Optional[str]
     location: Optional[str]
+    lat: Optional[float]
+    lon: Optional[float]
     status: str
     start_time: Optional[str]
     end_time: Optional[str]
@@ -55,6 +59,12 @@ class EventDB:
     async def init(self):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(CREATE_TABLE)
+            # Migrate existing DBs that predate the lat/lon columns
+            for col in ("lat", "lon"):
+                try:
+                    await db.execute(f"ALTER TABLE events ADD COLUMN {col} REAL")
+                except Exception:
+                    pass  # column already exists
             await db.commit()
         logger.info("Event database initialized at %s", self.db_path)
 
@@ -86,24 +96,28 @@ class EventDB:
                     await db.execute(
                         """UPDATE events SET
                             event_type=?, title=?, description=?, location=?,
-                            status=?, end_time=?, raw_text=?, updated_at=?
+                            lat=?, lon=?, status=?, end_time=?, raw_text=?, updated_at=?
                            WHERE id=?""",
                         (
                             event.event_type, event.title, event.description,
-                            event.location, event.status, event.end_time,
+                            event.location, event.lat, event.lon,
+                            event.status, event.end_time,
                             event.raw_text, now, event.id,
                         ),
                     )
                 else:
                     await db.execute(
-                        """INSERT INTO events VALUES
-                           (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        """INSERT INTO events
+                           (id, source, trust_level, event_type, title, description,
+                            location, lat, lon, status, start_time, end_time,
+                            raw_text, created_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             event.id, event.source, event.trust_level,
                             event.event_type, event.title, event.description,
-                            event.location, event.status, event.start_time,
-                            event.end_time, event.raw_text,
-                            event.created_at or now, now,
+                            event.location, event.lat, event.lon,
+                            event.status, event.start_time, event.end_time,
+                            event.raw_text, event.created_at or now, now,
                         ),
                     )
                 await db.commit()

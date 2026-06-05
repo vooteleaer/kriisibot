@@ -87,6 +87,8 @@ class RssFetcher:
             title=entry.get("title"),
             description=entry.get("summary", "")[:500] or None,
             location=classified.location,
+            lat=None,
+            lon=None,
             status=classified.status,
             start_time=_entry_published(entry),
             end_time=None,

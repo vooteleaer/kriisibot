@@ -45,6 +45,9 @@ Reeglid:
 - Kasutajate raportid on KONTROLLIMATA — märgi seda alati
 - Kui kasutaja kirjeldab sündmust, kogu detailid küsides vajaduse korral täpsustavküsimusi
   (küsi ükshaaval, nii palju küsimusi kui vaja — see on eravestlus)
+- Asukoha küsimisel aktsepteeri ka ligikaudseid kirjeldusi (linn, linnaosa, maantee, \
+  lähedal olev koht, tuntud objekt). Kui kasutaja ei tea täpset aadressi, küsi lähimat \
+  tuntud kohta ("mis on lähim tänav / asutus / küla?"). Pane location väljale parim saadaolev kirjeldus.
 - Kui oled kogunud piisavalt infot (vähemalt: mis juhtus + kus), lisa oma vastuse LÕPPU
   täpselt uuel real (midagi muud sinna vahele ei tohi tulla):
   RAPORT_JSON:{{"event_type":"<tüüp>","location":"<asukoht>","description":"<kirjeldus>","status":"OPEN"}}

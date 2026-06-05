@@ -92,6 +92,8 @@ class WeatherFetcher:
                 title=w["area"] or "Ilmahoiatus",
                 description=w["content"][:500],
                 location=w["area"] or classified.location,
+                lat=None,
+                lon=None,
                 status="OPEN",
                 start_time=now,
                 end_time=None,

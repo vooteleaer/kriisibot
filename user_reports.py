@@ -7,6 +7,7 @@ from typing import Optional, Callable, Awaitable
 
 from event_db import Event, EventDB
 from claude_client import ClaudeClient
+from geocoder import geocode
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,18 @@ class UserReportStore:
         if event_type not in self._claude.taxonomy:
             event_type = "other"
 
+        raw_location = fields.get("location") or ""
+        geo = await geocode(raw_location) if raw_location else None
+        # Geocoding is best-effort — if it fails or user gave a vague area,
+        # accept the report anyway with the location text as-is.
+        location = geo.address if geo else (raw_location or None)
+        lat = geo.lat if geo else None
+        lon = geo.lon if geo else None
+        if geo:
+            logger.info("Geocoded %r → %s (%.4f, %.4f)", raw_location, location, lat, lon)
+        elif raw_location:
+            logger.debug("Could not geocode %r — storing as text", raw_location)
+
         event = Event(
             id=event_id,
             source="user",
@@ -140,7 +153,9 @@ class UserReportStore:
             event_type=event_type,
             title=None,
             description=description[:500],
-            location=fields.get("location"),
+            location=location,
+            lat=lat,
+            lon=lon,
             status=fields.get("status", "OPEN"),
             start_time=now.isoformat(),
             end_time=None,
