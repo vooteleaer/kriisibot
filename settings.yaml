@@ -1,0 +1,62 @@
+meshcore:
+  port: COM59
+  channel: "#kriis"
+  advert_interval_seconds: 3600
+  bot_mention: "@[Kriisibot]"
+
+eesti_ee:
+  enabled: true
+  url: https://api.app.eesti.ee/api/sitrep/v1/full-events
+  poll_interval_seconds: 300
+
+weather:
+  enabled: true
+  poll_interval_seconds: 600   # warnings don't change that fast
+  # api_key: ""                # optional: ilmmicroservice.envir.ee key for richer data
+
+rss_feeds:
+  - url: https://www.err.ee/rss/uudised
+    name: "ERR uudised"
+    enabled: true
+  # - url: https://example.com/feed.rss
+  #   name: "Custom feed"
+  #   enabled: false
+
+claude:
+  model: claude-haiku-4-5-20251001
+  max_response_chars: 140  # per-sentence instruction to Claude; chunker splits full responses
+
+event_taxonomy:
+  - hostile_drone
+  - fallen_tree
+  - wildfire
+  - flood
+  - storm
+  - extreme_weather
+  - power_outage
+  - road_blocked
+  - chemical_hazard
+  - air_raid
+  - explosion
+  - missing_person
+  - civil_unrest
+  - other
+
+user_reports:
+  report_trigger: "!raport"
+  cooldown_seconds: 600
+  max_stored: 50
+  max_age_hours: 6
+  session_timeout_minutes: 30   # how long a PM intake session stays open between replies
+
+targeted_alerts:
+  enabled: true
+  radius_km: 50             # send PM to companions within this radius of the event
+  critical_event_types:     # these event types trigger targeted PMs
+    - air_raid
+    - hostile_drone
+    - chemical_hazard
+    - explosion
+
+database:
+  path: events.db
