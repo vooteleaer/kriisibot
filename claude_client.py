@@ -130,7 +130,9 @@ def _format_events(events: list[Event]) -> str:
         return "Aktiivseid sündmusi ei ole."
     lines = []
     for e in events:
-        parts = [f"[{e.event_type or 'other'}]", e.title or e.description or e.raw_text[:80]]
+        # For official events show full description so Claude doesn't have to guess
+        body = (e.description or e.title or e.raw_text) if e.trust_level == "official" else (e.title or e.description or e.raw_text[:80])
+        parts = [f"[{e.event_type or 'other'}]", body[:300]]
         if e.location:
             parts.append(f"({e.location})")
         trust = "" if e.trust_level == "official" else f" [{e.trust_level}]"

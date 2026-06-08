@@ -41,9 +41,23 @@ async def main():
     # Resolved after mesh is constructed so callbacks can reference it
     _mesh_ref: list[MeshCoreClient] = []
 
+    def _format_official_alert(event: Event) -> str:
+        """Return raw source text for official events — no AI paraphrasing."""
+        parts = []
+        if event.title:
+            parts.append(event.title)
+        if event.description:
+            parts.append(event.description)
+        return " | ".join(parts) if parts else event.raw_text
+
     async def on_new_events(events: list[Event]):
         for event in events:
-            alert = await claude.alert_for_event(event)
+            if event.trust_level == "official":
+                # Official warnings must go out verbatim
+                alert = _format_official_alert(event)
+            else:
+                # User reports: Claude sanitises and formats
+                alert = await claude.alert_for_event(event)
             logger.info("Broadcasting alert: %s", alert[:60])
             if _mesh_ref:
                 await _mesh_ref[0].send_channel(alert)
