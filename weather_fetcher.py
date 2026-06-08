@@ -31,10 +31,10 @@ def _parse_warnings(xml_text: str) -> list[dict]:
 
     for item in root.findall(".//warning") or root.findall(".//hoiatus") or root:
         area = (
-            (item.findtext("area_eng") or item.findtext("area_est") or "").strip()
+            (item.findtext("area_est") or item.findtext("area_eng") or "").strip()
         )
         content = (
-            (item.findtext("content_eng") or item.findtext("content_est") or "").strip()
+            (item.findtext("content_est") or item.findtext("content_eng") or "").strip()
         )
         timestamp = (item.findtext("timestamp") or "").strip()
 
