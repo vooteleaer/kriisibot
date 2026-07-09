@@ -121,6 +121,25 @@ class MeshCoreClient:
         # A new node is visible — refresh contacts to capture its position
         await self._refresh_contacts()
 
+    async def _handle_new_contact(self, event):
+        # Firmware saw an advert from a node it has no stored contact for. If
+        # manual_add_contacts is enabled on the companion device, it won't
+        # persist this as a real contact (and can't decrypt/route their PMs)
+        # without an explicit add — and nobody is around to tap "approve" in
+        # a phone app. Add unconditionally; this is a no-op if the device
+        # already auto-added it.
+        contact = event.payload or {}
+        name = contact.get("adv_name") or contact.get("public_key", "unknown")[:12]
+        try:
+            result = await self._mc.commands.add_contact(contact)
+            if result.type == EventType.ERROR:
+                logger.error("Failed to auto-add contact %s: %s", name, result.payload)
+            else:
+                logger.info("Auto-added new contact: %s", name)
+                await self._refresh_contacts()
+        except Exception:
+            logger.exception("Failed to auto-add new contact %s", name)
+
     async def _handle_pm(self, event):
         payload = event.payload or {}
         text: str = payload.get("text", "").strip()
@@ -148,6 +167,7 @@ class MeshCoreClient:
         )
         self._mc.subscribe(EventType.CONTACT_MSG_RECV, self._handle_pm)
         self._mc.subscribe(EventType.ADVERTISEMENT, self._handle_advert)
+        self._mc.subscribe(EventType.NEW_CONTACT, self._handle_new_contact)
         await self._mc.start_auto_message_fetching()
         await self._refresh_contacts()
         await self.send_advert()
@@ -204,11 +224,18 @@ class MeshCoreClient:
         total = len(chunks)
         for i, chunk in enumerate(chunks):
             try:
-                result = await self._mc.commands.send_msg(contact, chunk)
-                if result.type == EventType.ERROR:
-                    logger.error("send_msg error: %s", result.payload)
+                # send_msg only confirms local hand-off to the radio, not delivery.
+                # send_msg_with_retry waits for an ACK and falls back to flood
+                # routing if the contact's cached direct path is stale/dead —
+                # needed for contacts outside direct range.
+                result = await self._mc.commands.send_msg_with_retry(contact, chunk)
+                if result is None:
+                    logger.warning(
+                        "PM to %s chunk %d/%d not acknowledged after retries — "
+                        "recipient may be unreachable", pubkey, i + 1, total,
+                    )
                 else:
-                    logger.debug("PM to %s chunk %d/%d: %s", pubkey, i + 1, total, chunk[:40])
+                    logger.debug("PM to %s chunk %d/%d delivered: %s", pubkey, i + 1, total, chunk[:40])
             except Exception:
                 logger.exception("Failed to send PM chunk %d to %s", i + 1, pubkey)
             if i < total - 1:
@@ -225,3 +252,36 @@ class MeshCoreClient:
             except Exception:
                 pass
             self._mc = None
+
+    async def _restart(self, retries: int = 5, retry_delay: float = 10.0):
+        """Full disconnect → connect → discover → start cycle. Used by watchdog."""
+        await self.disconnect()
+        for attempt in range(1, retries + 1):
+            try:
+                await self.connect()
+                await self.discover_radio_limits()
+                await self.discover_channel()
+                await self.start()
+                return
+            except Exception as e:
+                logger.warning("Reconnect attempt %d/%d failed: %s", attempt, retries, e)
+                await self.disconnect()
+                if attempt < retries:
+                    await asyncio.sleep(retry_delay)
+        raise RuntimeError("MeshCore reconnect failed after all retries")
+
+    async def run_watchdog(self, interval_seconds: int = 60):
+        """Ping the radio every interval_seconds; reconnect if it stops responding."""
+        while True:
+            await asyncio.sleep(interval_seconds)
+            if self._mc is None:
+                continue
+            try:
+                await asyncio.wait_for(self._mc.commands.send_appstart(), timeout=15.0)
+            except Exception as e:
+                logger.warning("MeshCore health check failed (%s) — reconnecting", e)
+                try:
+                    await self._restart()
+                    logger.info("MeshCore reconnected successfully")
+                except Exception:
+                    logger.exception("MeshCore reconnect failed — will retry next cycle")

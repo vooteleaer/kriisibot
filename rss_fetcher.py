@@ -70,6 +70,9 @@ class RssFetcher:
             return None
 
         classified = await self._claude.classify_event(raw_text)
+        if classified.event_type == "other":
+            return None  # not a domestic crisis — don't store or broadcast general news
+
         candidate = await self._db.find_duplicate_candidate(
             classified.event_type, classified.location
         )

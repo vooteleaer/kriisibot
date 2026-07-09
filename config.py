@@ -52,6 +52,14 @@ class UserReportsConfig:
 
 
 @dataclass
+class TarkteeConfig:
+    enabled: bool = True
+    poll_interval_seconds: int = 120
+    accidents_enabled: bool = True
+    hazards_enabled: bool = True
+
+
+@dataclass
 class TargetedAlertsConfig:
     enabled: bool = True
     radius_km: float = 50.0
@@ -68,6 +76,7 @@ class Settings:
     meshcore: MeshCoreConfig = field(default_factory=MeshCoreConfig)
     eesti_ee: EestiEeConfig = field(default_factory=EestiEeConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
+    tarktee: TarkteeConfig = field(default_factory=TarkteeConfig)
     rss_feeds: list[RssFeed] = field(default_factory=list)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     event_taxonomy: list[str] = field(default_factory=lambda: ["other"])
@@ -128,6 +137,14 @@ def load_settings(path: str = "settings.yaml") -> Settings:
         critical_event_types=ta_raw.get("critical_event_types", ["air_raid", "hostile_drone", "chemical_hazard", "explosion"]),
     )
 
+    tt_raw = raw.get("tarktee", {})
+    tarktee = TarkteeConfig(
+        enabled=tt_raw.get("enabled", True),
+        poll_interval_seconds=tt_raw.get("poll_interval_seconds", 120),
+        accidents_enabled=tt_raw.get("accidents_enabled", True),
+        hazards_enabled=tt_raw.get("hazards_enabled", True),
+    )
+
     db_raw = raw.get("database", {})
     database = DatabaseConfig(path=db_raw.get("path", "events.db"))
 
@@ -146,6 +163,7 @@ def load_settings(path: str = "settings.yaml") -> Settings:
         meshcore=meshcore,
         eesti_ee=eesti_ee,
         weather=weather,
+        tarktee=tarktee,
         targeted_alerts=targeted_alerts,
         rss_feeds=rss_feeds,
         claude=claude,

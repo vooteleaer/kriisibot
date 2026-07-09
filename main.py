@@ -10,6 +10,7 @@ from conversation import ConversationHistory
 from crisis_fetcher import CrisisFetcher
 from rss_fetcher import RssFetcher
 from weather_fetcher import WeatherFetcher
+from tarktee_fetcher import TarkteeFetcher
 from user_reports import UserReportStore
 from meshcore_client import MeshCoreClient
 from node_tracker import NodeTracker, location_to_coords as _county_coords
@@ -192,15 +193,30 @@ async def main():
         api_key=settings.weather.api_key or None,
     )
 
+    tarktee_fetcher = TarkteeFetcher(
+        poll_interval=settings.tarktee.poll_interval_seconds,
+        db=db,
+        claude=claude,
+        on_new_events=on_new_events,
+        accidents_enabled=settings.tarktee.accidents_enabled,
+        hazards_enabled=settings.tarktee.hazards_enabled,
+    )
+
     tasks = []
     if settings.eesti_ee.enabled:
         tasks.append(asyncio.create_task(crisis_fetcher.run(), name="crisis_fetcher"))
     tasks.append(asyncio.create_task(rss_fetcher.run(), name="rss_fetcher"))
     if settings.weather.enabled:
         tasks.append(asyncio.create_task(weather_fetcher.run(), name="weather_fetcher"))
+    if settings.tarktee.enabled:
+        tasks.append(asyncio.create_task(tarktee_fetcher.run(), name="tarktee_fetcher"))
     tasks.append(asyncio.create_task(
         mesh.run_periodic_advert(settings.meshcore.advert_interval_seconds),
         name="advert",
+    ))
+    tasks.append(asyncio.create_task(
+        mesh.run_watchdog(interval_seconds=60),
+        name="watchdog",
     ))
 
     logger.info(

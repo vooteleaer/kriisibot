@@ -81,6 +81,11 @@ class WeatherFetcher:
                 continue
 
             raw_text = f"{w['area']}: {w['content']}".strip(": ")
+
+            if not await self._claude.check_severity(raw_text):
+                self._seen_ids.add(event_id)
+                continue
+
             classified = await self._claude.classify_event(raw_text)
 
             now = datetime.now(timezone.utc).isoformat()

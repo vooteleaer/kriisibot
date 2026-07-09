@@ -18,6 +18,40 @@ class GeoResult:
     quality: str        # e.g. "tapne_nr" (exact), "tänav" (street only)
 
 
+async def reverse_geocode(lat: float, lon: float) -> Optional[str]:
+    """Return a short human-readable location string from coordinates (Nominatim)."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=10,
+            headers={"User-Agent": "kriisibot/1.0", "Accept-Language": "et"},
+        ) as client:
+            resp = await client.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={"lat": lat, "lon": lon, "format": "json", "zoom": 16},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        addr = data.get("address", {})
+        road = (
+            addr.get("road")
+            or addr.get("motorway")
+            or addr.get("trunk")
+            or addr.get("primary")
+        )
+        place = (
+            addr.get("suburb")
+            or addr.get("village")
+            or addr.get("town")
+            or addr.get("city")
+            or addr.get("county")
+        )
+        parts = [p for p in [road, place] if p]
+        return ", ".join(parts) if parts else None
+    except Exception:
+        logger.warning("Reverse geocode failed for %.4f,%.4f", lat, lon, exc_info=True)
+        return None
+
+
 async def geocode(location_text: str) -> Optional[GeoResult]:
     """Look up a location using the Estonian Land Board In-ADS API.
 

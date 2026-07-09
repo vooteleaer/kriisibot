@@ -4,13 +4,17 @@ An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz
 
 ## Features
 
-- **Monitors official sources** — polls the [eesti.ee crisis API](https://api.app.eesti.ee/api/sitrep/v1/full-events) and configurable RSS feeds for new events
-- **Weather warnings** — fetches active warnings from the [Estonian Weather Service](https://www.ilmateenistus.ee)
+- **Monitors official sources** — polls the [eesti.ee crisis API](https://api.app.eesti.ee/api/sitrep/v1/full-events) and configurable RSS feeds for new events; general/foreign news that isn't a domestic crisis is discarded before it ever reaches the database
+- **Weather warnings** — fetches active warnings from the [Estonian Weather Service](https://www.ilmateenistus.ee); a severity check filters out only genuinely negligible warnings (e.g. patchy fog), everything else that the weather service bothered to issue gets broadcast
+- **Road accidents & hazards** — polls [Tarktee](https://tarktee.ee) for live traffic accidents and road-work/hazard reports, reverse-geocoding coordinates to a readable location when no road name is given
 - **AI-powered Q&A** — users mention `@[Kriisibot]` on the `#kriis` channel; Claude answers using current event data
 - **Private report intake** — users PM the bot to report field observations; Claude gathers details through a multi-turn conversation, geocodes the location, and broadcasts a sanitised summary to `#kriis`
 - **Address geocoding** — reported locations are validated and resolved to precise coordinates using the [Estonian Land Board In-ADS API](https://inaadress.maaamet.ee); vague descriptions are accepted gracefully
 - **Targeted emergency alerts** — for life-threatening events (air raid, drone threat, chemical hazard, explosion), sends direct PM to all companion nodes within a configurable radius of the event
 - **Event database** — all events are classified into a configurable taxonomy, deduplicated, and stored in a local SQLite database; known events are never re-processed by the LLM
+- **Reliable PM delivery** — replies wait for a delivery ACK and automatically fall back to flood routing if a contact's cached path has gone stale, instead of silently dropping the message
+- **Auto-adds new contacts** — any node whose advert reaches the radio is immediately added as a companion contact, so first-time senders can get a PM reply without manual approval in a phone app
+- **Connection watchdog** — periodically health-checks the serial link to the companion radio and reconnects automatically if it stops responding
 - **Flood advertisement** — bot advertises itself on the mesh hourly so new nodes can discover it
 - **Multilingual** — responds in whatever language the user writes in
 
@@ -49,8 +53,14 @@ weather:
   enabled: true
   poll_interval_seconds: 600
 
+tarktee:
+  enabled: true
+  poll_interval_seconds: 120
+  accidents_enabled: true
+  hazards_enabled: false      # road-work/hazard reports are noisier than accidents
+
 rss_feeds:
-  - url: https://www.err.ee/rss/uudised
+  - url: https://www.err.ee/rss
     name: "ERR uudised"
     enabled: true
 
@@ -67,6 +77,8 @@ event_taxonomy:               # Classification categories — extend as needed
   - extreme_weather
   - power_outage
   - road_blocked
+  - road_accident
+  - road_hazard
   - chemical_hazard
   - air_raid
   - explosion
@@ -107,6 +119,7 @@ Kriisibot running — channel '#kriis' on /dev/ttyUSB0 (Ctrl+C to stop)
 Crisis fetcher started (polling every 300s)
 RSS fetcher started (1 feeds, polling every 300s)
 Weather fetcher started (polling every 600s)
+Tarktee fetcher started (polling every 120s)
 ```
 
 Press **Ctrl+C** for a clean shutdown that releases the serial port.
@@ -179,14 +192,16 @@ python list_channels.py
 
 ```
 main.py                 Startup, event loop, message routing
-├── meshcore_client.py  MeshCore serial connection, channel/PM send & receive, node adverts
-├── claude_client.py    All Claude API calls (classify, answer, alert, plausibility check)
+├── meshcore_client.py  MeshCore serial connection, channel/PM send & receive, node adverts,
+│                       auto-add new contacts, connection watchdog
+├── claude_client.py    All Claude API calls (classify, answer, alert, plausibility, weather severity)
 ├── event_db.py         SQLite event store — classify once, deduplicate, skip known events
 ├── crisis_fetcher.py   Polls eesti.ee crisis API
 ├── rss_fetcher.py      Polls RSS/Atom feeds
 ├── weather_fetcher.py  Polls Estonian Weather Service XML warnings
+├── tarktee_fetcher.py  Polls Tarktee for road accidents and hazards
 ├── user_reports.py     PM-based multi-turn report intake with rate limiting
-├── geocoder.py         Estonian Land Board In-ADS geocoding for user-reported locations
+├── geocoder.py         Estonian Land Board In-ADS geocoding + Nominatim reverse geocoding
 ├── conversation.py     Per-user rolling conversation history for multi-turn Q&A
 ├── node_tracker.py     Tracks companion node positions from MeshCore advertisements
 └── config.py           Loads settings.yaml + .env
@@ -197,7 +212,8 @@ main.py                 Startup, event loop, message routing
 ```
 eesti.ee API ──┐
 RSS feeds ─────┼──► event_db (classify once, skip known) ──► broadcast to #kriis
-Weather API ───┘                                          └──► targeted PM to nearby companions
+Weather API ───┤                                          └──► targeted PM to nearby companions
+Tarktee ───────┘
 
 #kriis @mention ──► Claude Q&A (with active events as context) ──► reply to #kriis
 PM to bot ────────► multi-turn intake ──► geocode ──► plausibility check ──► [KONTROLLIMATA] to #kriis
@@ -210,6 +226,7 @@ PM to bot ────────► multi-turn intake ──► geocode ──
 |---|---|---|
 | eesti.ee | `official` | (none) |
 | Weather service | `official` | (none) |
+| Tarktee | `official` | (none) |
 | RSS feeds | `media` | (none) |
 | User PM reports | `unverified` | `[KONTROLLIMATA]` |
 
@@ -219,5 +236,7 @@ PM to bot ────────► multi-turn intake ──► geocode ──
 |---|---|---|
 | Estonian crisis events | `https://api.app.eesti.ee/api/sitrep/v1/full-events` | None |
 | Weather warnings | `https://www.ilmateenistus.ee/ilma_andmed/xml/hoiatus.php` | None |
+| Road accidents & hazards | `https://tarktee.ee/tarktee/rest/services/tram/operative_info/MapServer` | None |
 | Address geocoding | `https://inaadress.maaamet.ee/inaadress/gazetteer` | None |
+| Reverse geocoding | `https://nominatim.openstreetmap.org/reverse` | None |
 | RSS feeds | Configurable in `settings.yaml` | None |

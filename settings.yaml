@@ -15,7 +15,7 @@ weather:
   # api_key: ""                # optional: ilmmicroservice.envir.ee key for richer data
 
 rss_feeds:
-  - url: https://www.err.ee/rss/uudised
+  - url: https://www.err.ee/rss
     name: "ERR uudised"
     enabled: true
   # - url: https://example.com/feed.rss
@@ -26,6 +26,12 @@ claude:
   model: claude-haiku-4-5-20251001
   max_response_chars: 140  # per-sentence instruction to Claude; chunker splits full responses
 
+tarktee:
+  enabled: true
+  poll_interval_seconds: 120
+  accidents_enabled: true
+  hazards_enabled: false
+
 event_taxonomy:
   - hostile_drone
   - fallen_tree
@@ -35,6 +41,8 @@ event_taxonomy:
   - extreme_weather
   - power_outage
   - road_blocked
+  - road_accident
+  - road_hazard
   - chemical_hazard
   - air_raid
   - explosion

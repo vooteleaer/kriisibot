@@ -64,8 +64,21 @@ Reeglid:
 # ── Internal prompts ──────────────────────────────────────────────────────────
 
 EXTRACT_PROMPT = """\
-Loe järgmine tekst ja tuvasta:
-1. Sündmuse tüüp kategooriate hulgast: {taxonomy}
+Loe järgmine tekst. See võib olla ükskõik milline uudis või teade — enamik EI ole \
+hädaolukorrad Eestis.
+
+Määra event_type kategooriate hulgast {taxonomy} AINULT siis, kui tekst kirjeldab \
+TEGELIKKU, HETKEL KEHTIVAT või HILJUTIST ohtu või hädaolukorda EESTIS (Eesti territooriumil, \
+Eesti elanikele või taristule). Muudel juhtudel — sh välisriikide sõjauudised, poliitika, \
+sport, kultuur, majandus, teadus, olemuselt tavapärane inimhuvi-uudis, või mis tahes teade, \
+mis ei kirjelda otsest käimasolevat ohtu Eestis — määra event_type = "other".
+
+Ära klassifitseeri kategooriatesse nagu air_raid, hostile_drone vms lihtsalt seetõttu, et \
+tekstis mainitakse sõda, rünnakut või droone mõnes teises riigis (nt Ukraina, Venemaa, Mali) — \
+need kehtivad AINULT, kui oht puudutab otseselt Eestit.
+
+Tuvasta:
+1. Sündmuse tüüp (vt reeglid ülal)
 2. Asukoht (linn, maakond vms) — kui on
 3. Staatus: OPEN / CLOSED / UNKNOWN
 
@@ -83,6 +96,35 @@ Vasta AINULT ühe sõnaga: jah / kahtlane / ei
 
 Raport:
 {report_text}
+"""
+
+SEVERITY_PROMPT = """\
+Hinda, kas järgnev Eesti Ilmateenistuse hoiatus väärib kriisikanalisse edastamist. \
+See tekst pärineb ilmateenistuse AMETLIKUST hoiatuste nimekirjast (hoiatus.php) — \
+tavaline igapäevane ilmaprognoos ei jõua sinna kunagi, seega enamik siia jõudvaid \
+hoiatusi VÄÄRIVAD edastamist. Filtreeri välja ainult kõige leebemad, olematu \
+mõjuga kirjed.
+
+TAVALISEKS (EI ole tõsine, ÄRA edasta) loetakse ainult:
+- Hoiatus, mis ei kirjelda mingit konkreetset ohtu (nt puhas infotekst)
+- Kerge udu, kerge lumesadu vms ilma liiklus- või ohumõjuta
+- Meretuul alla 12 m/s ja lained alla 1 m
+
+TÕSISEKS (edasta) loetakse kõik muu, sh:
+- Tuul: puhangud alates 15 m/s maismaal või 12 m/s merel
+- Rahe, äike, jäide, lumetorm
+- Tugev või paduvihm ("ajuti tugev vihm" jms), sõltumata täpsest mm-kogusest
+- Üleujutus- või liiklusoht
+- Lainekõrgus alates 1 m
+- Erakordne kuumus või külm
+- Muu ohtlik või liiklust/tegevust häiriv ilmastikunähtus
+
+Kui kahtled, vali TÕSINE — parem edastada üks liigne hoiatus kui jätta tähtis hoiatus vahele.
+
+Vasta AINULT ühe sõnaga: tõsine / tavaline
+
+Hoiatus:
+{warning_text}
 """
 
 DUPLICATE_PROMPT = """\
@@ -276,6 +318,19 @@ class ClaudeClient:
             return answer if answer in ("jah", "kahtlane", "ei") else "kahtlane"
         except Exception:
             return "kahtlane"
+
+    async def check_severity(self, warning_text: str) -> bool:
+        """True if a weather warning describes genuinely severe conditions worth broadcasting."""
+        prompt = SEVERITY_PROMPT.format(warning_text=warning_text[:400])
+        try:
+            answer = await self._call(
+                [{"type": "text", "text": "Vasta ainult ühe sõnaga."}],
+                [{"role": "user", "content": prompt}],
+                max_tokens=8,
+            )
+            return answer.lower().strip(".") == "tõsine"
+        except Exception:
+            return True  # fail open — don't silently drop a possibly severe warning
 
     async def check_duplicate(self, new_raw: str, existing: Event) -> bool:
         existing_summary = f"{existing.title or ''} {existing.description or ''} {existing.location or ''}".strip()
