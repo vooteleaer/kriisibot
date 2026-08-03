@@ -99,6 +99,9 @@ class MeshCoreClient:
     async def _refresh_contacts(self):
         try:
             result = await self._mc.commands.get_contacts()
+            if result.type == EventType.ERROR:
+                logger.warning("Failed to refresh contacts cache: %s", result.payload)
+                return
             contacts = result.payload or {}
             for full_key, contact in contacts.items():
                 prefix = full_key[:12]
@@ -121,6 +124,21 @@ class MeshCoreClient:
         # A new node is visible — refresh contacts to capture its position
         await self._refresh_contacts()
 
+    async def _evict_stale_contact(self) -> bool:
+        """Drop the least-recently-adverted cached contact to free a slot in
+        the device's (fixed-size) contact table. Returns True on success."""
+        if not self._contact_cache:
+            return False
+        victim = min(self._contact_cache.values(), key=lambda c: c.get("last_advert", 0))
+        name = victim.get("adv_name") or victim.get("public_key", "unknown")[:12]
+        result = await self._mc.commands.remove_contact(victim)
+        if result.type == EventType.ERROR:
+            logger.error("Failed to evict stale contact %s: %s", name, result.payload)
+            return False
+        logger.info("Evicted stale contact %s (last advert %d) to free a table slot", name, victim.get("last_advert", 0))
+        self._contact_cache.pop(victim["public_key"][:12], None)
+        return True
+
     async def _handle_new_contact(self, event):
         # Firmware saw an advert from a node it has no stored contact for. If
         # manual_add_contacts is enabled on the companion device, it won't
@@ -130,8 +148,21 @@ class MeshCoreClient:
         # already auto-added it.
         contact = event.payload or {}
         name = contact.get("adv_name") or contact.get("public_key", "unknown")[:12]
+        # type 1 = CLI (companion radio). Repeaters, room servers, and sensors
+        # would otherwise burn slots in the device's fixed-size contact table.
+        if contact.get("type", -1) != 1:
+            logger.debug("Ignoring new contact %s (not a companion, type=%s)", name, contact.get("type"))
+            return
         try:
             result = await self._mc.commands.add_contact(contact)
+            if result.type == EventType.ERROR and result.payload.get("error_code") == 3:
+                # ERR_CODE_TABLE_FULL — the device's contact table is a fixed
+                # size, so free up a slot by dropping the stalest contact and
+                # retry once. Without this, the table fills permanently and
+                # no new node can ever be auto-added again.
+                logger.warning("Contact table full — evicting stalest contact to make room for %s", name)
+                if await self._evict_stale_contact():
+                    result = await self._mc.commands.add_contact(contact)
             if result.type == EventType.ERROR:
                 logger.error("Failed to auto-add contact %s: %s", name, result.payload)
             else:

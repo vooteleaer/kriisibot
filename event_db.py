@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS events (
     end_time    TEXT,
     raw_text    TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    severity    TEXT
 )
 """
 
@@ -45,6 +46,7 @@ class Event:
     raw_text: str
     created_at: str
     updated_at: str
+    severity: Optional[str] = None  # "high"/"medium"/"low" — only set by sources that grade severity (e.g. tarktee)
 
 
 def _now() -> str:
@@ -65,6 +67,11 @@ class EventDB:
                     await db.execute(f"ALTER TABLE events ADD COLUMN {col} REAL")
                 except Exception:
                     pass  # column already exists
+            # Migrate existing DBs that predate the severity column
+            try:
+                await db.execute("ALTER TABLE events ADD COLUMN severity TEXT")
+            except Exception:
+                pass  # column already exists
             await db.commit()
         logger.info("Event database initialized at %s", self.db_path)
 
@@ -96,13 +103,13 @@ class EventDB:
                     await db.execute(
                         """UPDATE events SET
                             event_type=?, title=?, description=?, location=?,
-                            lat=?, lon=?, status=?, end_time=?, raw_text=?, updated_at=?
+                            lat=?, lon=?, status=?, end_time=?, raw_text=?, updated_at=?, severity=?
                            WHERE id=?""",
                         (
                             event.event_type, event.title, event.description,
                             event.location, event.lat, event.lon,
                             event.status, event.end_time,
-                            event.raw_text, now, event.id,
+                            event.raw_text, now, event.severity, event.id,
                         ),
                     )
                 else:
@@ -110,14 +117,14 @@ class EventDB:
                         """INSERT INTO events
                            (id, source, trust_level, event_type, title, description,
                             location, lat, lon, status, start_time, end_time,
-                            raw_text, created_at, updated_at)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            raw_text, created_at, updated_at, severity)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             event.id, event.source, event.trust_level,
                             event.event_type, event.title, event.description,
                             event.location, event.lat, event.lon,
                             event.status, event.start_time, event.end_time,
-                            event.raw_text, event.created_at or now, now,
+                            event.raw_text, event.created_at or now, now, event.severity,
                         ),
                     )
                 await db.commit()

@@ -25,6 +25,7 @@ _WORKTYPE_TAXONOMY = {
 }
 
 _IMPORTANCE = {"H": "kõrge", "M": "keskmine", "L": "madal"}
+_IMPORTANCE_SEVERITY = {"H": "high", "M": "medium", "L": "low"}
 _PRIORITY = {"P3_HIGH": "kõrge", "P2_MEDIUM": "keskmine", "P1_LOW": "madal"}
 
 MAX_AGE_HOURS = 12  # ignore accidents older than this on startup
@@ -110,6 +111,7 @@ class TarkteeFetcher:
             raw_text=raw_text,
             created_at=now,
             updated_at=now,
+            severity=_IMPORTANCE_SEVERITY.get(importance),
         )
 
     async def _hazard_to_event(self, feat: dict) -> Optional[Event]:

@@ -60,6 +60,16 @@ class TarkteeConfig:
 
 
 @dataclass
+class ReticulumConfig:
+    enabled: bool = False
+    config_dir: str = "~/.reticulum"      # rnsd's config dir — must match, connects as shared-instance client
+    identity_dir: str = "./reticulum_identity"
+    display_name: str = "Kriisibot"
+    distribution_group_hash: str = ""     # hex LXMF destination hash of the existing distribution group
+    announce_interval_seconds: int = 3600
+
+
+@dataclass
 class TargetedAlertsConfig:
     enabled: bool = True
     radius_km: float = 50.0
@@ -77,6 +87,7 @@ class Settings:
     eesti_ee: EestiEeConfig = field(default_factory=EestiEeConfig)
     weather: WeatherConfig = field(default_factory=WeatherConfig)
     tarktee: TarkteeConfig = field(default_factory=TarkteeConfig)
+    reticulum: ReticulumConfig = field(default_factory=ReticulumConfig)
     rss_feeds: list[RssFeed] = field(default_factory=list)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     event_taxonomy: list[str] = field(default_factory=lambda: ["other"])
@@ -145,6 +156,16 @@ def load_settings(path: str = "settings.yaml") -> Settings:
         hazards_enabled=tt_raw.get("hazards_enabled", True),
     )
 
+    rt_raw = raw.get("reticulum", {})
+    reticulum = ReticulumConfig(
+        enabled=rt_raw.get("enabled", False),
+        config_dir=rt_raw.get("config_dir", "~/.reticulum"),
+        identity_dir=rt_raw.get("identity_dir", "./reticulum_identity"),
+        display_name=rt_raw.get("display_name", "Kriisibot"),
+        distribution_group_hash=rt_raw.get("distribution_group_hash", ""),
+        announce_interval_seconds=rt_raw.get("announce_interval_seconds", 3600),
+    )
+
     db_raw = raw.get("database", {})
     database = DatabaseConfig(path=db_raw.get("path", "events.db"))
 
@@ -164,6 +185,7 @@ def load_settings(path: str = "settings.yaml") -> Settings:
         eesti_ee=eesti_ee,
         weather=weather,
         tarktee=tarktee,
+        reticulum=reticulum,
         targeted_alerts=targeted_alerts,
         rss_feeds=rss_feeds,
         claude=claude,

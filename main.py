@@ -13,6 +13,7 @@ from weather_fetcher import WeatherFetcher
 from tarktee_fetcher import TarkteeFetcher
 from user_reports import UserReportStore
 from meshcore_client import MeshCoreClient
+from reticulum_client import ReticulumClient
 from node_tracker import NodeTracker, location_to_coords as _county_coords
 
 logging.basicConfig(
@@ -39,8 +40,22 @@ async def main():
     history = ConversationHistory(max_turns=6, max_age_minutes=15)
     nodes = NodeTracker()
 
-    # Resolved after mesh is constructed so callbacks can reference it
+    # Resolved after mesh/reticulum are constructed so callbacks can reference them
     _mesh_ref: list[MeshCoreClient] = []
+    _reticulum_ref: list[ReticulumClient] = []
+
+    def _is_channel_broadcastable(event: Event) -> bool:
+        """Only serious accidents and weather warnings go out on the public channel.
+
+        Other event types (eesti.ee sitrep, RSS news, minor tarktee hazards) are still
+        stored and remain eligible for targeted critical PMs and bot Q&A — they just
+        don't get broadcast to #kriis / the Reticulum group.
+        """
+        if event.source == "weather":
+            return True
+        if event.event_type == "road_accident" and event.severity == "high":
+            return True
+        return False
 
     def _format_official_alert(event: Event) -> str:
         """Return raw source text for official events — no AI paraphrasing."""
@@ -59,9 +74,14 @@ async def main():
             else:
                 # User reports: Claude sanitises and formats
                 alert = await claude.alert_for_event(event)
-            logger.info("Broadcasting alert: %s", alert[:60])
-            if _mesh_ref:
-                await _mesh_ref[0].send_channel(alert)
+            if _is_channel_broadcastable(event):
+                logger.info("Broadcasting alert: %s", alert[:60])
+                if _mesh_ref:
+                    await _mesh_ref[0].send_channel(alert)
+                if _reticulum_ref:
+                    await _reticulum_ref[0].send_broadcast(alert)
+            else:
+                logger.info("Stored (not broadcast to channel): %s", alert[:60])
 
             # Targeted PM to nearby companion nodes for life-threatening events
             if (
@@ -95,6 +115,8 @@ async def main():
         logger.info("Broadcasting user report: %s", broadcast[:60])
         if _mesh_ref:
             await _mesh_ref[0].send_channel(broadcast)
+        if _reticulum_ref:
+            await _reticulum_ref[0].send_broadcast(broadcast)
 
     user_report_store = UserReportStore(
         report_trigger=settings.user_reports.report_trigger,
@@ -126,12 +148,23 @@ async def main():
         history.add(pubkey, "assistant", answer)
         await mesh.send_channel(answer)
 
-    async def on_pm(pubkey: str, text: str):
-        """Handle private messages — freeform Q&A and report intake, no trigger needed."""
+    async def on_pm(sender_id: str, text: str, send_reply):
+        """Handle private messages — freeform Q&A and report intake, no trigger needed.
+
+        Transport-agnostic: sender_id and send_reply come from whichever
+        client (MeshCore or Reticulum) received the message, so both share
+        the same conversation/report-intake state keyed by sender_id.
+        """
         active = await db.get_active_events()
         reports = user_report_store.get_recent()
-        reply = await user_report_store.handle_pm(pubkey, text, active, reports)
-        await _mesh_ref[0].send_pm(pubkey, reply)
+        reply = await user_report_store.handle_pm(sender_id, text, active, reports)
+        await send_reply(sender_id, reply)
+
+    async def on_meshcore_pm(pubkey: str, text: str):
+        await on_pm(pubkey, text, _mesh_ref[0].send_pm)
+
+    async def on_reticulum_pm(dest_hash: str, text: str):
+        await on_pm(dest_hash, text, _reticulum_ref[0].send_pm)
 
     async def on_contacts_updated(contacts: dict):
         await nodes.update_from_contacts(contacts)
@@ -141,7 +174,7 @@ async def main():
         port=settings.meshcore.port,
         channel_name=settings.meshcore.channel,
         on_channel_message=on_channel_message,
-        on_pm=on_pm,
+        on_pm=on_meshcore_pm,
         on_contacts_updated=on_contacts_updated,
     )
     _mesh_ref.append(mesh)
@@ -154,6 +187,23 @@ async def main():
     except Exception:
         await mesh.disconnect()
         raise
+
+    reticulum = None
+    if settings.reticulum.enabled:
+        reticulum = ReticulumClient(
+            config_dir=settings.reticulum.config_dir,
+            identity_dir=settings.reticulum.identity_dir,
+            display_name=settings.reticulum.display_name,
+            distribution_group_hash=settings.reticulum.distribution_group_hash or None,
+            on_pm=on_reticulum_pm,
+        )
+        try:
+            await reticulum.connect()
+            _reticulum_ref.append(reticulum)
+        except Exception:
+            # Reticulum is a secondary transport — MeshCore must keep running without it.
+            logger.exception("Reticulum connect failed — continuing with MeshCore only")
+            reticulum = None
 
     crisis_fetcher = CrisisFetcher(
         url=settings.eesti_ee.url,
@@ -218,11 +268,17 @@ async def main():
         mesh.run_watchdog(interval_seconds=60),
         name="watchdog",
     ))
+    if reticulum:
+        tasks.append(asyncio.create_task(
+            reticulum.run_periodic_announce(settings.reticulum.announce_interval_seconds),
+            name="reticulum_announce",
+        ))
 
     logger.info(
-        "Kriisibot running — channel '%s' on %s (Ctrl+C to stop)",
+        "Kriisibot running — channel '%s' on %s, Reticulum %s (Ctrl+C to stop)",
         settings.meshcore.channel,
         settings.meshcore.port,
+        "connected" if reticulum else "disabled",
     )
 
     try:
@@ -235,6 +291,8 @@ async def main():
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await mesh.disconnect()
+        if reticulum:
+            await reticulum.disconnect()
         logger.info("Disconnected — port released.")
 
 

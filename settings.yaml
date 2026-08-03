@@ -32,6 +32,14 @@ tarktee:
   accidents_enabled: true
   hazards_enabled: false
 
+reticulum:
+  enabled: false                        # set true once rnsd is confirmed reachable
+  config_dir: ~/.reticulum              # must match the rnsd instance's --config dir exactly
+  identity_dir: ./reticulum_identity    # where kriisibot's own RNS identity + LXMF storage live
+  display_name: "Kriisibot"
+  distribution_group_hash: ""           # hex LXMF destination hash of the "kriis" distribution group to broadcast to
+  announce_interval_seconds: 3600
+
 event_taxonomy:
   - hostile_drone
   - fallen_tree

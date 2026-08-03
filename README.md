@@ -1,6 +1,6 @@
 # Kriisibot
 
-An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz/MeshCore) mesh radio networks. Designed for the Estonian emergency communications context, it monitors official crisis feeds and answers user questions over radio — even when internet infrastructure is degraded.
+An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz/MeshCore) mesh radio networks, with optional [Reticulum](https://reticulum.network)/LXMF support. Designed for the Estonian emergency communications context, it monitors official crisis feeds and answers user questions over radio — even when internet infrastructure is degraded.
 
 ## Features
 
@@ -16,6 +16,7 @@ An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz
 - **Auto-adds new contacts** — any node whose advert reaches the radio is immediately added as a companion contact, so first-time senders can get a PM reply without manual approval in a phone app
 - **Connection watchdog** — periodically health-checks the serial link to the companion radio and reconnects automatically if it stops responding
 - **Flood advertisement** — bot advertises itself on the mesh hourly so new nodes can discover it
+- **Reticulum/LXMF (optional)** — runs alongside MeshCore, not instead of it: PM Q&A/report intake work the same over LXMF direct messages, and crisis broadcasts are sent to an existing LXMF distribution group so its own subscribers get fanned out to automatically
 - **Multilingual** — responds in whatever language the user writes in
 
 ## Requirements
@@ -23,6 +24,7 @@ An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz
 - Python 3.10+
 - MeshCore companion radio connected via USB serial
 - [Anthropic API key](https://console.anthropic.com/)
+- (optional) A reachable `rnsd` instance, for Reticulum/LXMF support
 
 ## Installation
 
@@ -58,6 +60,14 @@ tarktee:
   poll_interval_seconds: 120
   accidents_enabled: true
   hazards_enabled: false      # road-work/hazard reports are noisier than accidents
+
+reticulum:
+  enabled: false                        # set true once rnsd is confirmed reachable
+  config_dir: ~/.reticulum              # must match the rnsd instance's --config dir exactly
+  identity_dir: ./reticulum_identity    # where kriisibot's own RNS identity + LXMF storage live
+  display_name: "Kriisibot"
+  distribution_group_hash: ""           # hex LXMF destination hash of the "kriis" distribution group to broadcast to
+  announce_interval_seconds: 3600
 
 rss_feeds:
   - url: https://www.err.ee/rss
@@ -101,6 +111,28 @@ user_reports:
   session_timeout_minutes: 30
 ```
 
+### Reticulum setup
+
+Reticulum support is off by default and, when enabled, runs *alongside* MeshCore rather than replacing it —
+if it fails to connect, kriisibot logs a warning and keeps running on MeshCore alone.
+
+Requirements:
+- An `rnsd` instance already running and reachable — kriisibot connects to it as a shared-instance
+  client (`RNS.Reticulum(configdir=...)`), it does not manage its own radio/TCP interfaces
+- `config_dir` **must** match the exact `--config` directory `rnsd` was started with, or connecting
+  fails with an RPC auth error (different config dirs → different transport identities)
+- An existing LXMF distribution group to broadcast to (kriisibot does not implement its own
+  subscriber/fan-out logic — it sends one message to the group's address and the group tool
+  handles distributing it to members, e.g. [LXMF-Tools' distribution group](https://github.com/SebastianObi/LXMF-Tools/tree/main/lxmf_distribution_group_extended))
+
+On first connect, kriisibot generates and persists its own `RNS.Identity` under `identity_dir` —
+this is its permanent LXMF address, so back up that directory. Its LXMF address is logged on startup;
+join it to the distribution group the same way any other member is added, then paste the group's own
+destination hash into `distribution_group_hash`.
+
+Direct LXMF messages to kriisibot's address get the exact same Q&A/report-intake handling as MeshCore
+PMs — no separate conversation logic, just a different transport.
+
 ## Running
 
 ```bash
@@ -121,6 +153,10 @@ RSS fetcher started (1 feeds, polling every 300s)
 Weather fetcher started (polling every 600s)
 Tarktee fetcher started (polling every 120s)
 ```
+
+If `reticulum.enabled: true`, a line like `Reticulum connected — LXMF address <hex> (Kriisibot)` appears
+after the MeshCore lines, and the final "Kriisibot running" line reports `Reticulum connected` (or
+`Reticulum disabled` if it failed to connect — MeshCore keeps running either way).
 
 Press **Ctrl+C** for a clean shutdown that releases the serial port.
 
@@ -179,7 +215,14 @@ falls back to the text description otherwise.
 Once enough information is collected, a sanitised `[KONTROLLIMATA]` summary is broadcast to `#kriis`.
 Personal details (names, phone numbers, individual injury descriptions) are removed before broadcasting.
 
-For life-threatening event types, all companion nodes within the configured radius also receive a direct PM alert.
+For life-threatening event types, all companion nodes within the configured radius also receive a direct PM alert
+(MeshCore only — Reticulum has no equivalent node-position tracking yet).
+
+### Reporting or asking questions over Reticulum
+
+If Reticulum is enabled, send an LXMF direct message to kriisibot's LXMF address — it gets the exact same
+freeform Q&A/report-intake handling as a MeshCore PM. Crisis broadcasts (including sanitised user reports)
+also go out to the configured LXMF distribution group, in parallel with `#kriis`.
 
 ### Utility scripts
 
@@ -194,6 +237,8 @@ python list_channels.py
 main.py                 Startup, event loop, message routing
 ├── meshcore_client.py  MeshCore serial connection, channel/PM send & receive, node adverts,
 │                       auto-add new contacts, connection watchdog
+├── reticulum_client.py Optional LXMF transport — PM Q&A/report intake, broadcast to a
+│                       distribution group; connects to an existing rnsd as a client
 ├── claude_client.py    All Claude API calls (classify, answer, alert, plausibility, weather severity)
 ├── event_db.py         SQLite event store — classify once, deduplicate, skip known events
 ├── crisis_fetcher.py   Polls eesti.ee crisis API
@@ -211,13 +256,13 @@ main.py                 Startup, event loop, message routing
 
 ```
 eesti.ee API ──┐
-RSS feeds ─────┼──► event_db (classify once, skip known) ──► broadcast to #kriis
+RSS feeds ─────┼──► event_db (classify once, skip known) ──► broadcast to #kriis + LXMF group
 Weather API ───┤                                          └──► targeted PM to nearby companions
 Tarktee ───────┘
 
-#kriis @mention ──► Claude Q&A (with active events as context) ──► reply to #kriis
-PM to bot ────────► multi-turn intake ──► geocode ──► plausibility check ──► [KONTROLLIMATA] to #kriis
-                                                                          └──► targeted PM if critical
+#kriis @mention ──────► Claude Q&A (with active events as context) ──► reply to #kriis
+PM / LXMF DM to bot ──► multi-turn intake ──► geocode ──► plausibility check ──► [KONTROLLIMATA] to #kriis + LXMF group
+                                                                              └──► targeted PM if critical (MeshCore only)
 ```
 
 ### Trust levels
