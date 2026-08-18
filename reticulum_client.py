@@ -48,12 +48,14 @@ class ReticulumClient:
 
     async def connect(self):
         self._loop = asyncio.get_running_loop()
-        await asyncio.to_thread(self._connect_sync)
+        # RNS.Reticulum() and LXMF.LXMRouter() both install a SIGINT handler,
+        # which only works from the main thread — must not run via asyncio.to_thread.
+        self._connect_sync()
 
     def _connect_sync(self):
-        os.makedirs(self._identity_dir, exist_ok=True)
-
         self._rns = RNS.Reticulum(configdir=self._config_dir)
+
+        os.makedirs(self._identity_dir, exist_ok=True)
 
         identity_path = os.path.join(self._identity_dir, "kriisibot.identity")
         if os.path.exists(identity_path):
