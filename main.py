@@ -212,6 +212,7 @@ async def main():
             distribution_group_hash=settings.reticulum.distribution_group_hash or None,
             on_pm=on_reticulum_pm,
             on_group_message=on_reticulum_group_message,
+            propagation_node_hash=settings.reticulum.propagation_node_hash or None,
         )
         try:
             await reticulum.connect()

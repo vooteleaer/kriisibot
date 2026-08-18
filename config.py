@@ -66,6 +66,7 @@ class ReticulumConfig:
     identity_dir: str = "./reticulum_identity"
     display_name: str = "Kriisibot"
     distribution_group_hash: str = ""     # hex LXMF destination hash of the existing distribution group
+    propagation_node_hash: str = ""       # hex LXMF propagation node destination hash, for offline-delivery fallback
     announce_interval_seconds: int = 3600
 
 
@@ -163,6 +164,7 @@ def load_settings(path: str = "settings.yaml") -> Settings:
         identity_dir=rt_raw.get("identity_dir", "./reticulum_identity"),
         display_name=rt_raw.get("display_name", "Kriisibot"),
         distribution_group_hash=rt_raw.get("distribution_group_hash", ""),
+        propagation_node_hash=rt_raw.get("propagation_node_hash", ""),
         announce_interval_seconds=rt_raw.get("announce_interval_seconds", 3600),
     )
 

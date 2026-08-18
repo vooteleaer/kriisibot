@@ -33,12 +33,16 @@ class ReticulumClient:
         distribution_group_hash: Optional[str],
         on_pm: Callable[[str, str], Awaitable[None]],
         on_group_message: Optional[Callable[[str], Awaitable[None]]] = None,
+        propagation_node_hash: Optional[str] = None,
     ):
         self._config_dir = os.path.expanduser(config_dir)
         self._identity_dir = identity_dir
         self._display_name = display_name
         self._group_hash = (
             bytes.fromhex(distribution_group_hash) if distribution_group_hash else None
+        )
+        self._propagation_node_hash = (
+            bytes.fromhex(propagation_node_hash) if propagation_node_hash else None
         )
         self._on_pm = on_pm
         self._on_group_message = on_group_message
@@ -72,6 +76,13 @@ class ReticulumClient:
         os.makedirs(lxmf_storage, exist_ok=True)
         self._router = LXMF.LXMRouter(storagepath=lxmf_storage)
         self._router.register_delivery_callback(self._handle_inbound)
+
+        if self._propagation_node_hash is not None:
+            self._router.set_outbound_propagation_node(self._propagation_node_hash)
+            logger.info(
+                "Reticulum propagation node set to %s",
+                RNS.prettyhexrep(self._propagation_node_hash),
+            )
 
         self._destination = self._router.register_delivery_identity(
             self._identity, display_name=self._display_name
