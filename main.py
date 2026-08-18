@@ -166,6 +166,21 @@ async def main():
     async def on_reticulum_pm(dest_hash: str, text: str):
         await on_pm(dest_hash, text, _reticulum_ref[0].send_pm)
 
+    async def on_reticulum_group_message(text: str):
+        """Handle messages relayed via the LXMF distribution group — only react when mentioned.
+
+        The group relays every member's message under its own identity, so unlike a
+        real PM there's no way to tell members apart — no per-sender conversation
+        history is kept, and replies go back to the group for everyone to see.
+        """
+        if mention not in text.lower():
+            return
+        question = text.lower().replace(mention, "").strip() or text.strip()
+        active = await db.get_active_events()
+        reports = user_report_store.get_recent()
+        answer = await claude.answer_question(question, active, reports, history=[])
+        await _reticulum_ref[0].send_broadcast(answer)
+
     async def on_contacts_updated(contacts: dict):
         await nodes.update_from_contacts(contacts)
         logger.info("Node tracker updated: %d companion(s) with position", nodes.count())
@@ -196,6 +211,7 @@ async def main():
             display_name=settings.reticulum.display_name,
             distribution_group_hash=settings.reticulum.distribution_group_hash or None,
             on_pm=on_reticulum_pm,
+            on_group_message=on_reticulum_group_message,
         )
         try:
             await reticulum.connect()

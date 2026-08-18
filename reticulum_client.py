@@ -32,6 +32,7 @@ class ReticulumClient:
         display_name: str,
         distribution_group_hash: Optional[str],
         on_pm: Callable[[str, str], Awaitable[None]],
+        on_group_message: Optional[Callable[[str], Awaitable[None]]] = None,
     ):
         self._config_dir = os.path.expanduser(config_dir)
         self._identity_dir = identity_dir
@@ -40,6 +41,7 @@ class ReticulumClient:
             bytes.fromhex(distribution_group_hash) if distribution_group_hash else None
         )
         self._on_pm = on_pm
+        self._on_group_message = on_group_message
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._rns: Optional[RNS.Reticulum] = None
         self._router: Optional[LXMF.LXMRouter] = None
@@ -89,6 +91,17 @@ class ReticulumClient:
             text = text.strip()
             if not text:
                 return
+
+            # The distribution group relays every member's message under its own
+            # identity (not the original sender's), so this is indistinguishable
+            # from a single shared sender — route it through the mention-gated
+            # group handler instead of treating it as a 1:1 PM.
+            if self._group_hash is not None and message.source_hash == self._group_hash:
+                logger.info("[Reticulum group] %s", text[:80])
+                if self._loop is not None and self._on_group_message is not None:
+                    asyncio.run_coroutine_threadsafe(self._on_group_message(text), self._loop)
+                return
+
             source_hash = message.source_hash.hex()
             logger.info("[Reticulum PM] %s: %s", source_hash, text[:80])
             if self._loop is not None:
