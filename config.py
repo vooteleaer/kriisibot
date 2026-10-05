@@ -100,9 +100,12 @@ class Settings:
 
 def load_settings(path: str = "settings.yaml") -> Settings:
     settings_path = Path(path)
+    if not settings_path.exists():
+        # Docker: the working dir is the state volume; fall back to the copy bundled with the code
+        settings_path = Path(__file__).parent / "settings.yaml"
     raw: dict = {}
     if settings_path.exists():
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
     mc_raw = raw.get("meshcore", {})
