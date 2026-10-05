@@ -52,6 +52,14 @@ docker run -d --name kriisibot --restart unless-stopped \
 
 ### Building and publishing
 
+Every push to `main` builds and publishes the image via GitHub Actions
+([.github/workflows/docker.yml](.github/workflows/docker.yml)) and syncs this README to the
+Docker Hub page. The workflow needs the repository secrets `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` (a Docker Hub access token with Read, Write, Delete scope — the description
+sync requires Delete).
+
+To publish by hand instead:
+
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t vooteleaer/kriisibot:latest -t vooteleaer/kriisibot:$(git rev-parse --short HEAD) --push .
@@ -70,7 +78,7 @@ In production kriisibot is the `kriisibot` service of the `reticulum` Docker Com
   bind-mounted, cgroup rules admit only USB-serial devices)
 - **Reticulum** — joins the `prnsd` container's shared instance over the host network
 
-To deploy a new version, publish the image (above), then on the server:
+To deploy a new version, push to `main` (or publish by hand, above), wait for the workflow, then on the server:
 
 ```bash
 cd /home/reticulum/reticulum-stack
