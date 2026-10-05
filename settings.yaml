@@ -1,5 +1,5 @@
 meshcore:
-  port: COM59
+  port: /dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_Board_E7085CC84F09F337-if00  # override locally with MESHCORE_PORT
   channel: "#kriis"
   advert_interval_seconds: 3600
   bot_mention: "@[Kriisibot]"
@@ -12,7 +12,7 @@ eesti_ee:
 weather:
   enabled: true
   poll_interval_seconds: 600   # warnings don't change that fast
-  # api_key: ""                # optional: ilmmicroservice.envir.ee key for richer data
+  min_level: 3                 # Meteoalarm awareness level to broadcast: 3 = orange+red, 4 = red only
 
 rss_feeds:
   - url: https://www.err.ee/rss
@@ -33,11 +33,12 @@ tarktee:
   hazards_enabled: false
 
 reticulum:
-  enabled: false                        # set true once rnsd is confirmed reachable
-  config_dir: ~/.reticulum              # must match the rnsd instance's --config dir exactly
+  enabled: true                         # joins the prnsd shared instance of the Docker stack
+  config_dir: ~/.reticulum              # must match the shared instance's config dir exactly
   identity_dir: ./reticulum_identity    # where kriisibot's own RNS identity + LXMF storage live
   display_name: "Kriisibot"
-  distribution_group_hash: ""           # hex LXMF destination hash of the "kriis" distribution group to broadcast to
+  distribution_group_hash: "ce8ea3b9014a5aeddbf00e197832af02"  # lxmf-distribution-group container
+  propagation_node_hash: "0e332dff8d34303d3f1df78764c5035e"    # lxmd container
   announce_interval_seconds: 3600
 
 event_taxonomy:

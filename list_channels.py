@@ -1,8 +1,21 @@
+"""List the channel slots configured on the companion radio.
+
+Stop the bot first — it holds the serial port. Port comes from MESHCORE_PORT or settings.yaml.
+"""
 import asyncio
+import os
+
+import yaml
 from meshcore import MeshCore
 
+
+def _port() -> str:
+    with open("settings.yaml", encoding="utf-8") as f:
+        return os.getenv("MESHCORE_PORT") or yaml.safe_load(f)["meshcore"]["port"]
+
+
 async def main():
-    mc = await MeshCore.create_serial("COM59", 115200)
+    mc = await MeshCore.create_serial(_port(), 115200)
     try:
         for idx in range(8):
             try:

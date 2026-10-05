@@ -45,14 +45,14 @@ async def main():
     _reticulum_ref: list[ReticulumClient] = []
 
     def _is_channel_broadcastable(event: Event) -> bool:
-        """Only serious accidents and weather warnings go out on the public channel.
+        """Only serious accidents and orange/red weather warnings go out on the public channel.
 
         Other event types (eesti.ee sitrep, RSS news, minor tarktee hazards) are still
         stored and remain eligible for targeted critical PMs and bot Q&A — they just
         don't get broadcast to #kriis / the Reticulum group.
         """
         if event.source == "weather":
-            return True
+            return event.severity == "high"
         if event.event_type == "road_accident" and event.severity == "high":
             return True
         return False
@@ -255,9 +255,8 @@ async def main():
     weather_fetcher = WeatherFetcher(
         poll_interval=settings.weather.poll_interval_seconds,
         db=db,
-        claude=claude,
         on_new_events=on_new_events,
-        api_key=settings.weather.api_key or None,
+        min_level=settings.weather.min_level,
     )
 
     tarktee_fetcher = TarkteeFetcher(

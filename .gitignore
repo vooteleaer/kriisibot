@@ -1,5 +1,7 @@
 .env
 events.db
+reticulum_identity/
+backup-*/
 __pycache__/
 *.pyc
 *.pyo

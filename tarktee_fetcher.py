@@ -6,7 +6,7 @@ import httpx
 
 from event_db import Event, EventDB
 from claude_client import ClaudeClient
-from geocoder import reverse_geocode
+from geocoder import reverse_geocode_parts, nearby_places
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,14 @@ class TarkteeFetcher:
             resp.raise_for_status()
             return resp.json().get("features", [])
 
+    async def _describe_location(self, lat: float, lon: float, road_hint: str | None) -> str | None:
+        """Landmark-relative location ("1,5 km Meremõisast läänes"), falling back to plain reverse geocode."""
+        road, admin = await reverse_geocode_parts(lat, lon)
+        road = road_hint or road
+        places = await nearby_places(lat, lon)
+        described = await self._claude.describe_location(road, admin, places)
+        return described or ", ".join(p for p in [road, admin] if p) or None
+
     async def _accident_to_event(self, feat: dict) -> Optional[Event]:
         attrs = feat.get("attributes", {})
         geom = feat.get("geometry", {})
@@ -84,14 +92,19 @@ class TarkteeFetcher:
         lon = geom.get("x")
 
         location = _location_str(attrs.get("road_name"), attrs.get("road_nr"))
-        if not location and lat and lon:
-            location = await reverse_geocode(lat, lon)
+        if lat and lon:
+            location = await self._describe_location(lat, lon, location)
 
         importance = attrs.get("importance", "")
         imp_label = _IMPORTANCE.get(importance, importance)
 
         title = "Liiklusõnnetus" + (f": {location}" if location else "")
-        description = f"Tõsidus: {imp_label}." if imp_label else None
+        desc_parts = []
+        if imp_label:
+            desc_parts.append(f"Tõsidus: {imp_label}.")
+        if lat and lon:
+            desc_parts.append(f"{lat:.4f},{lon:.4f}")
+        description = " ".join(desc_parts) or None
         raw_text = " ".join(p for p in [title, description] if p)
 
         now = datetime.now(timezone.utc).isoformat()
@@ -174,14 +187,20 @@ class TarkteeFetcher:
         current_ids: set[str] = set()
 
         for feat in features:
+            # Skip known features before converting — conversion geocodes, which should
+            # happen once per incident, not on every poll.
+            oid = feat.get("attributes", {}).get("objectid")
+            if oid is not None:
+                known_id = f"{id_prefix}{oid}"
+                if known_id in self._active_ids or await self._db.exists(known_id):
+                    current_ids.add(known_id)
+                    self._active_ids.add(known_id)
+                    continue
+
             event = await converter(feat)
             if event is None:
                 continue
             current_ids.add(event.id)
-
-            if event.id in self._active_ids or await self._db.exists(event.id):
-                self._active_ids.add(event.id)
-                continue
 
             await self._db.upsert(event)
             self._active_ids.add(event.id)

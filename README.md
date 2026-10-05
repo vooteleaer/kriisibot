@@ -5,8 +5,8 @@ An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz
 ## Features
 
 - **Monitors official sources** — polls the [eesti.ee crisis API](https://api.app.eesti.ee/api/sitrep/v1/full-events) and configurable RSS feeds for new events; general/foreign news that isn't a domestic crisis is discarded before it ever reaches the database
-- **Weather warnings** — fetches active warnings from the [Estonian Weather Service](https://www.ilmateenistus.ee); a severity check filters out only genuinely negligible warnings (e.g. patchy fog), everything else that the weather service bothered to issue gets broadcast
-- **Road accidents & hazards** — polls [Tarktee](https://tarktee.ee) for live traffic accidents and road-work/hazard reports, reverse-geocoding coordinates to a readable location when no road name is given
+- **Weather warnings** — the Estonian Weather Service's official warnings via [Meteoalarm](https://meteoalarm.org); only **orange and red** (awareness level 3–4, i.e. danger to life or property) are broadcast, land and sea areas alike. Yellow everyday warnings are ignored, and reissued warnings aren't broadcast twice
+- **Road accidents & hazards** — polls [Tarktee](https://tarktee.ee) for live traffic accidents and road-work/hazard reports. Accident coordinates are turned into a landmark-relative location ("Meremõisa rannatee, 1,8 km Meremõisast läänes") from Nominatim + nearby OpenStreetMap places (Overpass), phrased by Claude, with the coordinates appended
 - **AI-powered Q&A** — users mention `@[Kriisibot]` on the `#kriis` channel; Claude answers using current event data
 - **Private report intake** — users PM the bot to report field observations; Claude gathers details through a multi-turn conversation, geocodes the location, and broadcasts a sanitised summary to `#kriis`
 - **Address geocoding** — reported locations are validated and resolved to precise coordinates using the [Estonian Land Board In-ADS API](https://inaadress.maaamet.ee); vague descriptions are accepted gracefully
@@ -24,25 +24,46 @@ An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz
 - Python 3.10+
 - MeshCore companion radio connected via USB serial
 - [Anthropic API key](https://console.anthropic.com/)
-- (optional) A reachable `rnsd` instance, for Reticulum/LXMF support
+- (optional) A reachable Reticulum shared instance, for LXMF support
 
-## Installation
+## Deployment
+
+Kriisibot runs as the `kriisibot` service of the `reticulum` Docker Compose stack
+(`/home/reticulum/reticulum-stack/compose.yaml`), alongside the other Reticulum apps:
+
+- **Image** — the shared `reticulum-apps:local` image (Python 3.13 with pinned `rns`, `lxmf`,
+  `meshcore`, `anthropic` and the rest of `requirements.txt`), built from `apps-image/`
+- **Code and state** — the named volume `home-kriisibot`, mounted at `/home/reticulum`; the bot
+  runs from `/home/reticulum/kriisibot` (code, `settings.yaml`, `events.db`, `reticulum_identity/`)
+- **Secrets** — `env/kriisibot.env` (`ANTHROPIC_API_KEY`)
+- **Radio** — the RAK4631 companion, addressed by its `/dev/serial/by-id/...` link (host `/dev` is
+  bind-mounted, cgroup rules admit only USB-serial devices)
+- **Reticulum** — joins the `prnsd` container's shared instance over the host network
+
+To deploy a code change, copy the changed files into the container and restart it:
 
 ```bash
-git clone https://github.com/yourname/kriisibot
-cd kriisibot
+docker cp weather_fetcher.py kriisibot:/home/reticulum/kriisibot/
+docker restart kriisibot
+docker logs -f kriisibot
+```
+
+### Local development
+
+```bash
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env and set ANTHROPIC_API_KEY
+cp .env.example .env          # set ANTHROPIC_API_KEY, and MESHCORE_PORT (e.g. COM59)
+python main.py
 ```
 
 ## Configuration
 
 All non-secret settings live in `settings.yaml`. The only secret is the Anthropic API key in `.env`.
+`MESHCORE_PORT` in the environment overrides `meshcore.port`.
 
 ```yaml
 meshcore:
-  port: /dev/ttyUSB0         # Serial port of the companion radio
+  port: /dev/serial/by-id/usb-RAKwireless_WisCore_RAK4631_...  # Serial port of the companion radio
   channel: "#kriis"           # Channel to listen and broadcast on
   bot_mention: "@[Kriisibot]" # How users address the bot on the channel
   advert_interval_seconds: 3600
@@ -54,6 +75,7 @@ eesti_ee:
 weather:
   enabled: true
   poll_interval_seconds: 600
+  min_level: 3                # Meteoalarm awareness level: 3 = orange+red, 4 = red only
 
 tarktee:
   enabled: true
@@ -62,11 +84,12 @@ tarktee:
   hazards_enabled: false      # road-work/hazard reports are noisier than accidents
 
 reticulum:
-  enabled: false                        # set true once rnsd is confirmed reachable
-  config_dir: ~/.reticulum              # must match the rnsd instance's --config dir exactly
+  enabled: true
+  config_dir: ~/.reticulum              # must match the shared instance's config dir exactly
   identity_dir: ./reticulum_identity    # where kriisibot's own RNS identity + LXMF storage live
   display_name: "Kriisibot"
-  distribution_group_hash: ""           # hex LXMF destination hash of the "kriis" distribution group to broadcast to
+  distribution_group_hash: "<hex>"      # LXMF destination of the "kriis" distribution group to broadcast to
+  propagation_node_hash: "<hex>"        # optional LXMF propagation node for offline delivery
   announce_interval_seconds: 3600
 
 rss_feeds:
@@ -113,13 +136,13 @@ user_reports:
 
 ### Reticulum setup
 
-Reticulum support is off by default and, when enabled, runs *alongside* MeshCore rather than replacing it —
+Reticulum support runs *alongside* MeshCore rather than replacing it —
 if it fails to connect, kriisibot logs a warning and keeps running on MeshCore alone.
 
 Requirements:
-- An `rnsd` instance already running and reachable — kriisibot connects to it as a shared-instance
+- A Reticulum shared instance already running and reachable (`prnsd` in the Docker stack) — kriisibot connects to it as a shared-instance
   client (`RNS.Reticulum(configdir=...)`), it does not manage its own radio/TCP interfaces
-- `config_dir` **must** match the exact `--config` directory `rnsd` was started with, or connecting
+- `config_dir` **must** match the exact config directory the shared instance uses, or connecting
   fails with an RPC auth error (different config dirs → different transport identities)
 - An existing LXMF distribution group to broadcast to (kriisibot does not implement its own
   subscriber/fan-out logic — it sends one message to the group's address and the group tool
@@ -135,22 +158,18 @@ PMs — no separate conversation logic, just a different transport.
 
 ## Running
 
-```bash
-python main.py
-```
-
-Expected startup output:
+Expected startup output (`docker logs kriisibot`):
 ```
 Event database initialized at events.db
-Connecting to MeshCore on /dev/ttyUSB0 (attempt 1/10)...
+Connecting to MeshCore on /dev/serial/by-id/usb-RAKwireless_... (attempt 1/10)...
 Connected to MeshCore
 Found channel '#kriis' at index 1
 Flood advert sent
 Listening on channel '#kriis' (index 1) and PMs
-Kriisibot running — channel '#kriis' on /dev/ttyUSB0 (Ctrl+C to stop)
+Kriisibot running — channel '#kriis' on /dev/serial/by-id/usb-RAKwireless_..., Reticulum connected (Ctrl+C to stop)
 Crisis fetcher started (polling every 300s)
 RSS fetcher started (1 feeds, polling every 300s)
-Weather fetcher started (polling every 600s)
+Weather fetcher started (Meteoalarm, level >= 3, polling every 600s)
 Tarktee fetcher started (polling every 120s)
 ```
 
@@ -158,31 +177,7 @@ If `reticulum.enabled: true`, a line like `Reticulum connected — LXMF address 
 after the MeshCore lines, and the final "Kriisibot running" line reports `Reticulum connected` (or
 `Reticulum disabled` if it failed to connect — MeshCore keeps running either way).
 
-Press **Ctrl+C** for a clean shutdown that releases the serial port.
-
-### Systemd service (Raspberry Pi)
-
-```ini
-[Unit]
-Description=Kriisibot MeshCore crisis info bot
-After=network.target
-
-[Service]
-WorkingDirectory=/home/pi/kriisibot
-ExecStart=/usr/bin/python3 main.py
-Restart=on-failure
-RestartSec=10
-EnvironmentFile=/home/pi/kriisibot/.env
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo cp kriisibot.service /etc/systemd/system/
-sudo systemctl enable kriisibot
-sudo systemctl start kriisibot
-```
+`docker stop`/`docker restart` (SIGTERM), or **Ctrl+C** locally, gives a clean shutdown that releases the serial port.
 
 ## Usage
 
@@ -227,7 +222,7 @@ also go out to the configured LXMF distribution group, in parallel with `#kriis`
 ### Utility scripts
 
 ```bash
-# List all channels configured on the companion radio
+# List all channels configured on the companion radio (stop the bot first — it holds the port)
 python list_channels.py
 ```
 
@@ -238,15 +233,15 @@ main.py                 Startup, event loop, message routing
 ├── meshcore_client.py  MeshCore serial connection, channel/PM send & receive, node adverts,
 │                       auto-add new contacts, connection watchdog
 ├── reticulum_client.py Optional LXMF transport — PM Q&A/report intake, broadcast to a
-│                       distribution group; connects to an existing rnsd as a client
-├── claude_client.py    All Claude API calls (classify, answer, alert, plausibility, weather severity)
+│                       distribution group; connects to the shared instance as a client
+├── claude_client.py    All Claude API calls (classify, answer, alert, plausibility, location phrasing)
 ├── event_db.py         SQLite event store — classify once, deduplicate, skip known events
 ├── crisis_fetcher.py   Polls eesti.ee crisis API
 ├── rss_fetcher.py      Polls RSS/Atom feeds
-├── weather_fetcher.py  Polls Estonian Weather Service XML warnings
+├── weather_fetcher.py  Polls Meteoalarm for orange/red Estonian weather warnings
 ├── tarktee_fetcher.py  Polls Tarktee for road accidents and hazards
 ├── user_reports.py     PM-based multi-turn report intake with rate limiting
-├── geocoder.py         Estonian Land Board In-ADS geocoding + Nominatim reverse geocoding
+├── geocoder.py         In-ADS geocoding, Nominatim reverse geocoding, Overpass nearby places
 ├── conversation.py     Per-user rolling conversation history for multi-turn Q&A
 ├── node_tracker.py     Tracks companion node positions from MeshCore advertisements
 └── config.py           Loads settings.yaml + .env
@@ -257,7 +252,7 @@ main.py                 Startup, event loop, message routing
 ```
 eesti.ee API ──┐
 RSS feeds ─────┼──► event_db (classify once, skip known) ──► broadcast to #kriis + LXMF group
-Weather API ───┤                                          └──► targeted PM to nearby companions
+Meteoalarm ────┤                                          └──► targeted PM to nearby companions
 Tarktee ───────┘
 
 #kriis @mention ──────► Claude Q&A (with active events as context) ──► reply to #kriis
@@ -280,8 +275,9 @@ PM / LXMF DM to bot ──► multi-turn intake ──► geocode ──► plau
 | Source | URL | Auth |
 |---|---|---|
 | Estonian crisis events | `https://api.app.eesti.ee/api/sitrep/v1/full-events` | None |
-| Weather warnings | `https://www.ilmateenistus.ee/ilma_andmed/xml/hoiatus.php` | None |
+| Weather warnings | `https://feeds.meteoalarm.org/api/v1/warnings/feeds-estonia` | None |
 | Road accidents & hazards | `https://tarktee.ee/tarktee/rest/services/tram/operative_info/MapServer` | None |
 | Address geocoding | `https://inaadress.maaamet.ee/inaadress/gazetteer` | None |
 | Reverse geocoding | `https://nominatim.openstreetmap.org/reverse` | None |
+| Nearby landmarks | `https://overpass-api.de/api/interpreter` | None |
 | RSS feeds | Configurable in `settings.yaml` | None |

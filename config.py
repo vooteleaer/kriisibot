@@ -19,7 +19,7 @@ class MeshCoreConfig:
 class WeatherConfig:
     enabled: bool = True
     poll_interval_seconds: int = 600
-    api_key: str = ""
+    min_level: int = 3  # Meteoalarm awareness level: 2 yellow, 3 orange, 4 red
 
 
 @dataclass
@@ -62,7 +62,7 @@ class TarkteeConfig:
 @dataclass
 class ReticulumConfig:
     enabled: bool = False
-    config_dir: str = "~/.reticulum"      # rnsd's config dir — must match, connects as shared-instance client
+    config_dir: str = "~/.reticulum"      # shared instance config dir — must match, connects as a client
     identity_dir: str = "./reticulum_identity"
     display_name: str = "Kriisibot"
     distribution_group_hash: str = ""     # hex LXMF destination hash of the existing distribution group
@@ -179,7 +179,7 @@ def load_settings(path: str = "settings.yaml") -> Settings:
     weather = WeatherConfig(
         enabled=w_raw.get("enabled", True),
         poll_interval_seconds=w_raw.get("poll_interval_seconds", 600),
-        api_key=w_raw.get("api_key", ""),
+        min_level=w_raw.get("min_level", 3),
     )
 
     return Settings(

@@ -98,33 +98,26 @@ Raport:
 {report_text}
 """
 
-SEVERITY_PROMPT = """\
-Hinda, kas järgnev Eesti Ilmateenistuse hoiatus väärib kriisikanalisse edastamist. \
-See tekst pärineb ilmateenistuse AMETLIKUST hoiatuste nimekirjast (hoiatus.php) — \
-tavaline igapäevane ilmaprognoos ei jõua sinna kunagi, seega enamik siia jõudvaid \
-hoiatusi VÄÄRIVAD edastamist. Filtreeri välja ainult kõige leebemad, olematu \
-mõjuga kirjed.
+LOCATION_PROMPT = """\
+Koosta liiklusõnnetuse asukohast lühike (max 60 tähemärki) eestikeelne kirjeldus, \
+mille järgi kohalik inimene koha kohe ära tunneb.
 
-TAVALISEKS (EI ole tõsine, ÄRA edasta) loetakse ainult:
-- Hoiatus, mis ei kirjelda mingit konkreetset ohtu (nt puhas infotekst)
-- Kerge udu, kerge lumesadu vms ilma liiklus- või ohumõjuta
-- Meretuul alla 12 m/s ja lained alla 1 m
+Reeglid:
+- Kasuta AINULT allpool antud nimesid — ära leiuta teid, kohti ega objekte.
+- Kuju: "<tee>, <üks viitepunkt>". Kasuta täpselt ÜHTE viitepunkti.
+- Kirjuta tee nimi TÄPSELT nii, nagu see on antud (ära lisa "tee", "tn" vms).
+- Kui kuni ~300 m kaugusel on tuntud objekt (tankla, pood, kool, kirik, jaam), kasuta seda: \
+"Sõpruse pst, Circle K tankla juures".
+- Muidu kirjelda kaugus ja suund lähima asula suhtes, asula seestütlevas käändes: \
+"Meremõisa rannatee, 1,5 km Meremõisast läänes", "Ravila mnt, 300 m Kosest lõunas".
+- Kui punkt on asula sees (alla ~300 m asula keskpunktist), kirjuta lihtsalt "<tee>, <asula>" (asula nimetavas käändes, nt "Riia, Tartu kesklinn").
+- Kaugus ümarda 100 m täpsusega (alla 1 km meetrites, muidu km ühe komakohaga).
+- Vasta AINULT asukohatekstiga, ilma jutumärkide, lõpupunkti ja selgitusteta.
 
-TÕSISEKS (edasta) loetakse kõik muu, sh:
-- Tuul: puhangud alates 15 m/s maismaal või 12 m/s merel
-- Rahe, äike, jäide, lumetorm
-- Tugev või paduvihm ("ajuti tugev vihm" jms), sõltumata täpsest mm-kogusest
-- Üleujutus- või liiklusoht
-- Lainekõrgus alates 1 m
-- Erakordne kuumus või külm
-- Muu ohtlik või liiklust/tegevust häiriv ilmastikunähtus
-
-Kui kahtled, vali TÕSINE — parem edastada üks liigne hoiatus kui jätta tähtis hoiatus vahele.
-
-Vasta AINULT ühe sõnaga: tõsine / tavaline
-
-Hoiatus:
-{warning_text}
+Tee: {road}
+Haldusüksus: {admin}
+Lähedased kohad (kaugus punktist, punkt asub kohast vaadatuna):
+{places}
 """
 
 DUPLICATE_PROMPT = """\
@@ -319,18 +312,26 @@ class ClaudeClient:
         except Exception:
             return "kahtlane"
 
-    async def check_severity(self, warning_text: str) -> bool:
-        """True if a weather warning describes genuinely severe conditions worth broadcasting."""
-        prompt = SEVERITY_PROMPT.format(warning_text=warning_text[:400])
+    async def describe_location(self, road: str | None, admin: str | None, places: list[dict]) -> str | None:
+        """Human-readable location phrase from reverse-geocode data and nearby landmarks."""
+        if not places:
+            return None  # nothing to anchor on — caller's plain road/settlement string reads better
+        places_text = "\n".join(
+            f"- {p['name']} ({p['kind']}): {p['distance_m']} m, punkt on sellest {p['direction']}"
+            for p in places
+        ) or "-"
+        prompt = LOCATION_PROMPT.format(road=road or "-", admin=admin or "-", places=places_text)
         try:
-            answer = await self._call(
-                [{"type": "text", "text": "Vasta ainult ühe sõnaga."}],
+            text = await self._call(
+                [{"type": "text", "text": "Vasta ainult asukohatekstiga."}],
                 [{"role": "user", "content": prompt}],
-                max_tokens=8,
+                max_tokens=60,
             )
-            return answer.lower().strip(".") == "tõsine"
         except Exception:
-            return True  # fail open — don't silently drop a possibly severe warning
+            logger.warning("Location description failed", exc_info=True)
+            return None
+        text = text.strip().strip('"').strip().rstrip(".")
+        return text[:80] or None
 
     async def check_duplicate(self, new_raw: str, existing: Event) -> bool:
         existing_summary = f"{existing.title or ''} {existing.description or ''} {existing.location or ''}".strip()
