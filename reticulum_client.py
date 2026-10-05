@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Callable, Awaitable, Optional
 
 import RNS
@@ -9,6 +10,9 @@ import LXMF
 logger = logging.getLogger(__name__)
 
 APP_ASPECT = ("lxmf", "delivery")
+
+# How long a send waits for an unknown destination's identity to arrive after a path request
+IDENTITY_WAIT_SECONDS = 30
 
 
 class ReticulumClient:
@@ -115,6 +119,11 @@ class ReticulumClient:
 
             source_hash = message.source_hash.hex()
             logger.info("[Reticulum PM] %s: %s", source_hash, text[:80])
+            # LXMF delivers messages from senders whose announce we haven't seen (their
+            # signature just can't be validated), so the identity needed for the reply may be
+            # unknown. Ask for it now so it has usually arrived by the time the reply is ready.
+            if RNS.Identity.recall(message.source_hash) is None:
+                RNS.Transport.request_path(message.source_hash)
             if self._loop is not None:
                 asyncio.run_coroutine_threadsafe(self._on_pm(source_hash, text), self._loop)
         except Exception:
@@ -133,21 +142,15 @@ class ReticulumClient:
             logger.error("Invalid Reticulum destination hash: %s", dest_hash_hex)
             return
 
-        identity = RNS.Identity.recall(dest_hash)
+        identity = self._resolve_identity(dest_hash)
         if identity is None:
-            # We can only reply to senders whose identity RNS has already
-            # resolved — which it must have, to have delivered their message
-            # to us in the first place. A None here means the recall cache
-            # was flushed since; nothing to do but drop it.
-            logger.warning("Cannot send Reticulum PM to %s — identity not resolved", dest_hash_hex)
+            logger.warning(
+                "Cannot send Reticulum PM to %s — identity not resolved after %ds",
+                dest_hash_hex, IDENTITY_WAIT_SECONDS,
+            )
             return
 
-        dest = RNS.Destination(identity, RNS.Destination.OUT, RNS.Destination.SINGLE, *APP_ASPECT)
-        lxm = LXMF.LXMessage(
-            dest, self._destination, text,
-            desired_method=LXMF.LXMessage.OPPORTUNISTIC,
-        )
-        self._router.handle_outbound(lxm)
+        self._send_lxm(identity, text)
         logger.debug("Reticulum PM sent to %s", dest_hash_hex)
 
     async def send_broadcast(self, text: str):
@@ -161,22 +164,58 @@ class ReticulumClient:
             logger.error("Reticulum not connected — cannot broadcast")
             return
 
-        identity = RNS.Identity.recall(self._group_hash)
+        identity = self._resolve_identity(self._group_hash)
         if identity is None:
             logger.warning(
-                "Distribution group %s not resolved yet (no announce seen) — skipping broadcast",
-                self._group_hash.hex(),
+                "Distribution group %s not resolved after %ds — skipping broadcast",
+                self._group_hash.hex(), IDENTITY_WAIT_SECONDS,
             )
             return
 
+        self._send_lxm(identity, text, title=self._display_name)
+        logger.debug("Reticulum broadcast sent to distribution group: %s", text[:60])
+
+    def _resolve_identity(self, dest_hash: bytes) -> Optional[RNS.Identity]:
+        """Recall a destination's identity, requesting a path (which brings its announce) if unknown.
+
+        A shared-instance client keeps known identities in memory only, so after a restart
+        nothing is known until announces arrive. Blocks — call from a worker thread.
+        """
+        identity = RNS.Identity.recall(dest_hash)
+        if identity is not None:
+            return identity
+        RNS.Transport.request_path(dest_hash)
+        deadline = time.monotonic() + IDENTITY_WAIT_SECONDS
+        while identity is None and time.monotonic() < deadline:
+            time.sleep(0.5)
+            identity = RNS.Identity.recall(dest_hash)
+        return identity
+
+    def _send_lxm(self, identity: RNS.Identity, text: str, title: str = ""):
         dest = RNS.Destination(identity, RNS.Destination.OUT, RNS.Destination.SINGLE, *APP_ASPECT)
         lxm = LXMF.LXMessage(
             dest, self._destination, text,
-            title=self._display_name,
+            title=title,
             desired_method=LXMF.LXMessage.OPPORTUNISTIC,
         )
+        if self._propagation_node_hash is not None:
+            lxm.register_failed_callback(self._fall_back_to_propagation)
         self._router.handle_outbound(lxm)
-        logger.debug("Reticulum broadcast sent to distribution group: %s", text[:60])
+
+    def _fall_back_to_propagation(self, failed: "LXMF.LXMessage"):
+        # LXMF just drops an opportunistic message once its delivery attempts run out —
+        # queue a copy on the propagation node so the recipient gets it when it next syncs.
+        if failed.desired_method == LXMF.LXMessage.PROPAGATED:
+            logger.warning("Reticulum message to %s failed via propagation node too", failed.destination_hash.hex())
+            return
+        logger.info("Direct delivery to %s failed — queuing on propagation node", failed.destination_hash.hex())
+        retry = LXMF.LXMessage(
+            failed.get_destination(), self._destination, failed.content,
+            title=failed.title,
+            desired_method=LXMF.LXMessage.PROPAGATED,
+        )
+        retry.register_failed_callback(self._fall_back_to_propagation)
+        self._router.handle_outbound(retry)
 
     async def run_periodic_announce(self, interval_seconds: int = 3600):
         """Re-announce periodically so other nodes' path caches don't go stale."""
