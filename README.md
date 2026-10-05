@@ -26,27 +26,59 @@ An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz
 - [Anthropic API key](https://console.anthropic.com/)
 - (optional) A reachable Reticulum shared instance, for LXMF support
 
+## Docker image
+
+Published on Docker Hub as [`vooteleaer/kriisibot`](https://hub.docker.com/r/vooteleaer/kriisibot)
+(`linux/amd64` and `linux/arm64`, e.g. Raspberry Pi). Tags: `latest` and the git commit hash.
+
+- Code lives in `/app`; the working directory `/home/reticulum/kriisibot` holds the state —
+  `settings.yaml`, `events.db` and `reticulum_identity/` — and should be a volume. Without a
+  `settings.yaml` there, the copy bundled in the image is used.
+- Runs as uid/gid `1002` (`reticulum`), home `/home/reticulum` (Reticulum's `~/.reticulum` lives there)
+- `ANTHROPIC_API_KEY` comes from the environment; `MESHCORE_PORT` optionally overrides the serial port
+- Before starting, the entrypoint waits up to 120 s for a Reticulum shared instance on
+  `127.0.0.1:37428` and then starts regardless. `RNS_SHARED_INSTANCE_WAIT=0` skips the wait,
+  e.g. when Reticulum is disabled.
+
+Minimal standalone run:
+
+```bash
+docker run -d --name kriisibot --restart unless-stopped \
+  --device /dev/ttyUSB0 -e MESHCORE_PORT=/dev/ttyUSB0 \
+  -e ANTHROPIC_API_KEY=sk-ant-... -e RNS_SHARED_INSTANCE_WAIT=0 \
+  -v kriisibot-state:/home/reticulum/kriisibot \
+  vooteleaer/kriisibot:latest
+```
+
+### Building and publishing
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t vooteleaer/kriisibot:latest -t vooteleaer/kriisibot:$(git rev-parse --short HEAD) --push .
+```
+
 ## Deployment
 
-Kriisibot runs as the `kriisibot` service of the `reticulum` Docker Compose stack
-(`/home/reticulum/reticulum-stack/compose.yaml`), alongside the other Reticulum apps:
+In production kriisibot is the `kriisibot` service of the `reticulum` Docker Compose stack
+(`/home/reticulum/reticulum-stack/compose.yaml`), next to the other Reticulum apps:
 
-- **Image** — the shared `reticulum-apps:local` image (Python 3.13 with pinned `rns`, `lxmf`,
-  `meshcore`, `anthropic` and the rest of `requirements.txt`), built from `apps-image/`
-- **Code and state** — the named volume `home-kriisibot`, mounted at `/home/reticulum`; the bot
-  runs from `/home/reticulum/kriisibot` (code, `settings.yaml`, `events.db`, `reticulum_identity/`)
+- **Image** — `vooteleaer/kriisibot:latest`
+- **State** — named volume `home-kriisibot`, mounted at `/home/reticulum` (Reticulum config in
+  `.reticulum/`, bot state in `kriisibot/`). Edit `kriisibot/settings.yaml` there to change settings.
 - **Secrets** — `env/kriisibot.env` (`ANTHROPIC_API_KEY`)
 - **Radio** — the RAK4631 companion, addressed by its `/dev/serial/by-id/...` link (host `/dev` is
   bind-mounted, cgroup rules admit only USB-serial devices)
 - **Reticulum** — joins the `prnsd` container's shared instance over the host network
 
-To deploy a code change, copy the changed files into the container and restart it:
+To deploy a new version, publish the image (above), then on the server:
 
 ```bash
-docker cp weather_fetcher.py kriisibot:/home/reticulum/kriisibot/
-docker restart kriisibot
+cd /home/reticulum/reticulum-stack
+docker compose pull kriisibot && docker compose up -d kriisibot
 docker logs -f kriisibot
 ```
+
+Settings changes only need `docker restart kriisibot`.
 
 ### Local development
 
@@ -58,7 +90,8 @@ python main.py
 
 ## Configuration
 
-All non-secret settings live in `settings.yaml`. The only secret is the Anthropic API key in `.env`.
+All non-secret settings live in `settings.yaml`. The only secret is the Anthropic API key
+(`.env` locally, `env/kriisibot.env` in the Docker stack).
 `MESHCORE_PORT` in the environment overrides `meshcore.port`.
 
 ```yaml
