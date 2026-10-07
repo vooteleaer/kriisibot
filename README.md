@@ -6,7 +6,7 @@ An AI-powered crisis information bot for [MeshCore](https://github.com/ripplebiz
 
 - **Monitors official sources** — polls the [eesti.ee crisis API](https://api.app.eesti.ee/api/sitrep/v1/full-events) and configurable RSS feeds for new events; general/foreign news that isn't a domestic crisis is discarded before it ever reaches the database
 - **Weather warnings** — the Estonian Weather Service's official warnings via [Meteoalarm](https://meteoalarm.org); only **orange and red** (awareness level 3–4, i.e. danger to life or property) are broadcast, land and sea areas alike. Yellow everyday warnings are ignored, and reissued warnings aren't broadcast twice
-- **Road accidents & hazards** — polls [Tarktee](https://tarktee.ee) for live traffic accidents and road-work/hazard reports. Accident coordinates are turned into a landmark-relative location ("Meremõisa rannatee, 1,8 km Meremõisast läänes") from Nominatim + nearby OpenStreetMap places (Overpass), phrased by Claude, with the coordinates appended
+- **Road accidents & hazards** — polls [Tarktee](https://tarktee.ee) for live traffic accidents and road-work/hazard reports. Accident coordinates are turned into a road + settlement location from Nominatim — "Tehase tn, Narva" inside a town or village, "Tallinna mnt, 3,3 km Narvast lõunas" between settlements (Claude only inflects the place name) — with the coordinates appended
 - **AI-powered Q&A** — users mention `@[Kriisibot]` on the `#kriis` channel; Claude answers using current event data
 - **Private report intake** — users PM the bot to report field observations; Claude gathers details through a multi-turn conversation, geocodes the location, and broadcasts a sanitised summary to `#kriis`
 - **Address geocoding** — reported locations are validated and resolved to precise coordinates using the [Estonian Land Board In-ADS API](https://inaadress.maaamet.ee); vague descriptions are accepted gracefully
@@ -282,7 +282,7 @@ main.py                 Startup, event loop, message routing
 ├── weather_fetcher.py  Polls Meteoalarm for orange/red Estonian weather warnings
 ├── tarktee_fetcher.py  Polls Tarktee for road accidents and hazards
 ├── user_reports.py     PM-based multi-turn report intake with rate limiting
-├── geocoder.py         In-ADS geocoding, Nominatim reverse geocoding, Overpass nearby places
+├── geocoder.py         In-ADS geocoding, Nominatim reverse geocoding and containing settlement
 ├── conversation.py     Per-user rolling conversation history for multi-turn Q&A
 ├── node_tracker.py     Tracks companion node positions from MeshCore advertisements
 └── config.py           Loads settings.yaml + .env

@@ -98,79 +98,13 @@ Raport:
 {report_text}
 """
 
-LOCATION_PROMPT = """\
-Koosta liiklusõnnetuse asukohast lühike (max 80 tähemärki) eestikeelne kirjeldus, \
-mille järgi kohalik inimene koha kohe ära tunneb.
+ELATIVE_PROMPT = """\
+Kirjuta eesti kohanimi seestütlevas käändes (kust?), nt Narva → Narvast, Kose → Kosest, \
+Meremõisa → Meremõisast, Tartu → Tartust.
+Vasta AINULT käändes nimega.
 
-Reeglid:
-- Kasuta AINULT allpool antud nimesid — ära leiuta teid, kohti ega objekte.
-- Kirjeldus peab sisaldama asulaga seotud viidet, sest objekti või tee nimi üksi ei ütle kohalikule, kus see on. Sobib üks järgmistest: asula, mille sees punkt asub; kaugus ja suund lähima asula suhtes; või kui lähedasi asulaid pole antud, siis haldusüksus (vald).
-- Alusta ALATI tee nimega ja kirjuta see TÄPSELT nii, nagu see on antud, koos teenumbriga, kui see on antud.
-- Asula sees olekut hinda haldusüksuse esimese nime järgi (see on asula, mille piires punkt asub), \
-mitte kauguse järgi asula keskpunktist — linnas võib punkt olla keskpunktist mitme km kaugusel.
-- Kui punkt on linnas või alevis, ära kirjelda kaugust selle keskpunktist.
-- Asula sees: kui kuni ~300 m kaugusel on tuntud objekt, kasuta seda koos objekti tüübi ja asulaga: "Sõpruse pst, Circle K tankla juures, Tartu", "Jõhvi-Tartu-Valga tee, Postkontori bussipeatuse juures, Jõhvi". Ära kasuta objekti nime ilma tüübita (bussipeatus, pood, kool jne). Tuntud objekti puudumisel kirjuta "<tee>, <asula>" (asula nimetavas käändes, nt "Riia, Tartu kesklinn").
-- Maanteel asulate vahel (haldusüksus on küla või vald) kirjelda kaugus ja suund lähima asula suhtes, asula seestütlevas käändes: "Meremõisa rannatee, 1,5 km Meremõisast läänes", "Tallinn-Tartu-Võru-Luhamaa tee, 2,3 km Kosest lõunas".
-- Kaugus ümarda 100 m täpsusega (alla 1 km meetrites, muidu km ühe komakohaga).
-- Vasta AINULT asukohatekstiga, ilma jutumärkide, lõpupunkti ja selgitusteta.
-
-Tee: {road}
-Haldusüksus: {admin}
-Lähedased kohad (kaugus punktist, punkt asub kohast vaadatuna):
-{places}
+{name}
 """
-
-_PLACE_KINDS_ET = {
-    "city": "linn", "town": "linn", "village": "küla", "suburb": "linnaosa",
-    "neighbourhood": "asum", "hamlet": "küla", "fuel": "tankla", "school": "kool",
-    "kindergarten": "lasteaed", "place_of_worship": "kirik", "hospital": "haigla",
-    "police": "politsei", "fire_station": "päästekomando", "townhall": "vallamaja",
-    "community_centre": "rahvamaja", "hotel": "hotell", "museum": "muuseum",
-    "marketplace": "turg", "library": "raamatukogu", "pharmacy": "apteek",
-    "supermarket": "pood", "convenience": "pood", "mall": "kaubanduskeskus",
-    "station": "raudteejaam", "halt": "rongipeatus", "bus_stop": "bussipeatus",
-}
-_SETTLEMENT_KINDS = {"city", "town", "village", "suburb", "neighbourhood", "hamlet"}
-
-
-_ROAD_TYPE_RE = re.compile(
-    r"\b(tee|mnt|maantee|tn|tänav|pst|puiestee|põik|allee|väljak|plats|rada|sild)\b",
-    re.IGNORECASE,
-)
-
-
-def _with_road_type(road: str | None) -> str | None:
-    """OSM gives town streets bare ("Tehase") — add "tn" so the text reads as a road."""
-    if not road or _ROAD_TYPE_RE.search(road):
-        return road
-    return f"{road} tn"
-
-
-def _ensure_settlement(text: str, road: str | None, admin: str | None, places: list[dict]) -> str:
-    """Add a settlement reference if the model left every one out (e.g. "<tee>, Postkontor juures").
-
-    Prefers the administrative unit the point lies in (every rural point belongs to some village or
-    parish, so this stays true on a highway); otherwise names the nearest settlement with its distance
-    rather than implying the point is inside it.
-    """
-    containing = admin.split(",")[0].strip() if admin else None
-    settlements = [p for p in places if p["kind"] in _SETTLEMENT_KINDS]
-    lowered = text.lower()
-    if road:
-        # Road names often carry town names ("Jõhvi-Tartu-Valga") — those don't count
-        lowered = lowered.replace(re.sub(r"\s*\(tee \d+\)", "", road).lower(), "")
-    # Compare stems so inflected forms ("Kosest", "Tartust") still count as mentioned
-    for name in [containing, *(p["name"] for p in settlements)]:
-        if name and name.lower()[: max(3, len(name) - 1)] in lowered:
-            return text
-    if containing:
-        return f"{text}, {containing}"
-    if settlements:
-        nearest = settlements[0]
-        dist = nearest["distance_m"]
-        dist_text = f"{dist // 100 * 100} m" if dist < 1000 else f"{dist / 1000:.1f} km".replace(".", ",")
-        return f"{text}, lähim asula: {nearest['name']}, {dist_text}"
-    return text
 
 
 DUPLICATE_PROMPT = """\
@@ -365,30 +299,22 @@ class ClaudeClient:
         except Exception:
             return "kahtlane"
 
-    async def describe_location(self, road: str | None, admin: str | None, places: list[dict]) -> str | None:
-        """Human-readable location phrase from reverse-geocode data and nearby landmarks."""
-        if not places:
-            return None  # nothing to anchor on — caller's plain road/settlement string reads better
-        places_text = "\n".join(
-            f"- {p['name']} ({_PLACE_KINDS_ET.get(p['kind'], p['kind'])}): "
-            f"{p['distance_m']} m, punkt on sellest {p['direction']}"
-            for p in places
-        ) or "-"
-        road = _with_road_type(road)
-        prompt = LOCATION_PROMPT.format(road=road or "-", admin=admin or "-", places=places_text)
+    async def elative(self, name: str) -> str | None:
+        """Place name in the elative case ("Narva" → "Narvast"), or None on failure."""
         try:
             text = await self._call(
-                [{"type": "text", "text": "Vasta ainult asukohatekstiga."}],
-                [{"role": "user", "content": prompt}],
-                max_tokens=80,
+                [{"type": "text", "text": "Vasta ainult käändes nimega."}],
+                [{"role": "user", "content": ELATIVE_PROMPT.format(name=name)}],
+                max_tokens=20,
             )
         except Exception:
-            logger.warning("Location description failed", exc_info=True)
+            logger.warning("Elative for %r failed", name, exc_info=True)
             return None
         text = text.strip().strip('"').strip().rstrip(".")
-        if not text:
+        # Guard against chatter: the answer must be one word-ish form of the same name
+        if not text or len(text) > len(name) + 4 or text[:2].lower() != name[:2].lower():
             return None
-        return _ensure_settlement(text, road, admin, places)[:100]
+        return text
 
     async def check_duplicate(self, new_raw: str, existing: Event) -> bool:
         existing_summary = f"{existing.title or ''} {existing.description or ''} {existing.location or ''}".strip()

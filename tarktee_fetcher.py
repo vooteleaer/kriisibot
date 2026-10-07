@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Callable, Awaitable, Optional
 import httpx
 
 from event_db import Event, EventDB
 from claude_client import ClaudeClient
-from geocoder import reverse_geocode_parts, nearby_places
+from geocoder import reverse_geocode_parts, settlement_at
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,19 @@ _IMPORTANCE_SEVERITY = {"H": "high", "M": "medium", "L": "low"}
 _PRIORITY = {"P3_HIGH": "kõrge", "P2_MEDIUM": "keskmine", "P1_LOW": "madal"}
 
 MAX_AGE_HOURS = 12  # ignore accidents older than this on startup
+VILLAGE_RADIUS_M = 1000  # closer than this to a village centre counts as "in the village"
+
+_ROAD_TYPE_RE = re.compile(
+    r"\b(tee|mnt|maantee|tn|tänav|pst|puiestee|põik|allee|väljak|plats|rada|sild)\b",
+    re.IGNORECASE,
+)
+
+
+def _with_road_type(road: str | None) -> str | None:
+    """OSM gives town streets bare ("Tehase") — add "tn" so the text reads as a road."""
+    if not road or _ROAD_TYPE_RE.search(road):
+        return road
+    return f"{road} tn"
 
 
 def _location_str(road_name: str | None, road_nr: int | None) -> str | None:
@@ -65,12 +79,25 @@ class TarkteeFetcher:
             return resp.json().get("features", [])
 
     async def _describe_location(self, lat: float, lon: float, road_hint: str | None) -> str | None:
-        """Landmark-relative location ("1,5 km Meremõisast läänes"), falling back to plain reverse geocode."""
-        road, admin = await reverse_geocode_parts(lat, lon)
-        road = road_hint or road
-        places = await nearby_places(lat, lon)
-        described = await self._claude.describe_location(road, admin, places)
-        return described or ", ".join(p for p in [road, admin] if p) or None
+        """"Tehase tn, Narva" inside a settlement, "Tallinna mnt, 3,3 km Narvast lõunas" outside."""
+        road, admin, town = await reverse_geocode_parts(lat, lon)
+        road = _with_road_type(road_hint or road)
+        if town:
+            return ", ".join(p for p in [road, town] if p)
+        village = await settlement_at(lat, lon)
+        if village and village["distance_m"] < VILLAGE_RADIUS_M:
+            return ", ".join(p for p in [road, village["name"]] if p)
+        if village:
+            return ", ".join(p for p in [road, await self._distance_phrase(village)] if p)
+        return ", ".join(p for p in [road, admin] if p) or None
+
+    async def _distance_phrase(self, place: dict) -> str:
+        dist = place["distance_m"]
+        dist_text = f"{dist // 100 * 100} m" if dist < 1000 else f"{dist / 1000:.1f}".replace(".", ",") + " km"
+        elative = await self._claude.elative(place["name"])
+        if elative:
+            return f"{dist_text} {elative} {place['direction']}"
+        return f"{dist_text} {place['direction']} asulast {place['name']}"
 
     async def _accident_to_event(self, feat: dict) -> Optional[Event]:
         attrs = feat.get("attributes", {})
