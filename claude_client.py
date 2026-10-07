@@ -99,18 +99,15 @@ Raport:
 """
 
 LOCATION_PROMPT = """\
-Koosta liiklusõnnetuse asukohast lühike (max 60 tähemärki) eestikeelne kirjeldus, \
+Koosta liiklusõnnetuse asukohast lühike (max 80 tähemärki) eestikeelne kirjeldus, \
 mille järgi kohalik inimene koha kohe ära tunneb.
 
 Reeglid:
 - Kasuta AINULT allpool antud nimesid — ära leiuta teid, kohti ega objekte.
-- Kuju: "<tee>, <üks viitepunkt>". Kasuta täpselt ÜHTE viitepunkti.
+- Kirjeldus peab sisaldama asulaga seotud viidet, sest objekti või tee nimi üksi ei ütle kohalikule, kus see on. Sobib üks järgmistest: asula, mille sees punkt asub; kaugus ja suund lähima asula suhtes; või kui lähedasi asulaid pole antud, siis haldusüksus (vald).
 - Kirjuta tee nimi TÄPSELT nii, nagu see on antud (ära lisa "tee", "tn" vms).
-- Kui kuni ~300 m kaugusel on tuntud objekt (tankla, pood, kool, kirik, jaam), kasuta seda: \
-"Sõpruse pst, Circle K tankla juures".
-- Muidu kirjelda kaugus ja suund lähima asula suhtes, asula seestütlevas käändes: \
-"Meremõisa rannatee, 1,5 km Meremõisast läänes", "Ravila mnt, 300 m Kosest lõunas".
-- Kui punkt on asula sees (alla ~300 m asula keskpunktist), kirjuta lihtsalt "<tee>, <asula>" (asula nimetavas käändes, nt "Riia, Tartu kesklinn").
+- Asula sees (lähim asula alla ~1 km): kui kuni ~300 m kaugusel on tuntud objekt, kasuta seda koos objekti tüübi ja asulaga: "Sõpruse pst, Circle K tankla juures, Tartu", "Jõhvi-Tartu-Valga tee, Postkontori bussipeatuse juures, Jõhvi". Ära kasuta objekti nime ilma tüübita (bussipeatus, pood, kool jne). Tuntud objekti puudumisel kirjuta "<tee>, <asula>" (asula nimetavas käändes, nt "Riia, Tartu kesklinn").
+- Maanteel asulate vahel kirjelda kaugus ja suund lähima asula suhtes, asula seestütlevas käändes: "Meremõisa rannatee, 1,5 km Meremõisast läänes", "Tallinn-Tartu-Võru-Luhamaa tee, 2,3 km Kosest lõunas".
 - Kaugus ümarda 100 m täpsusega (alla 1 km meetrites, muidu km ühe komakohaga).
 - Vasta AINULT asukohatekstiga, ilma jutumärkide, lõpupunkti ja selgitusteta.
 
@@ -119,6 +116,46 @@ Haldusüksus: {admin}
 Lähedased kohad (kaugus punktist, punkt asub kohast vaadatuna):
 {places}
 """
+
+_PLACE_KINDS_ET = {
+    "city": "linn", "town": "linn", "village": "küla", "suburb": "linnaosa",
+    "neighbourhood": "asum", "hamlet": "küla", "fuel": "tankla", "school": "kool",
+    "kindergarten": "lasteaed", "place_of_worship": "kirik", "hospital": "haigla",
+    "police": "politsei", "fire_station": "päästekomando", "townhall": "vallamaja",
+    "community_centre": "rahvamaja", "hotel": "hotell", "museum": "muuseum",
+    "marketplace": "turg", "library": "raamatukogu", "pharmacy": "apteek",
+    "supermarket": "pood", "convenience": "pood", "mall": "kaubanduskeskus",
+    "station": "raudteejaam", "halt": "rongipeatus", "bus_stop": "bussipeatus",
+}
+_SETTLEMENT_KINDS = {"city", "town", "village", "suburb", "neighbourhood", "hamlet"}
+
+
+def _ensure_settlement(text: str, road: str | None, admin: str | None, places: list[dict]) -> str:
+    """Add a settlement reference if the model left every one out (e.g. "<tee>, Postkontor juures").
+
+    Prefers the administrative unit the point lies in (every rural point belongs to some village or
+    parish, so this stays true on a highway); otherwise names the nearest settlement with its distance
+    rather than implying the point is inside it.
+    """
+    containing = admin.split(",")[0].strip() if admin else None
+    settlements = [p for p in places if p["kind"] in _SETTLEMENT_KINDS]
+    lowered = text.lower()
+    if road:
+        # Road names often carry town names ("Jõhvi-Tartu-Valga") — those don't count
+        lowered = lowered.replace(re.sub(r"\s*\(tee \d+\)", "", road).lower(), "")
+    # Compare stems so inflected forms ("Kosest", "Tartust") still count as mentioned
+    for name in [containing, *(p["name"] for p in settlements)]:
+        if name and name.lower()[: max(3, len(name) - 1)] in lowered:
+            return text
+    if containing:
+        return f"{text}, {containing}"
+    if settlements:
+        nearest = settlements[0]
+        dist = nearest["distance_m"]
+        dist_text = f"{dist // 100 * 100} m" if dist < 1000 else f"{dist / 1000:.1f} km".replace(".", ",")
+        return f"{text}, lähim asula: {nearest['name']}, {dist_text}"
+    return text
+
 
 DUPLICATE_PROMPT = """\
 Kas uus sündmus räägib samast intsidendist kui olemasolev sündmus?
@@ -317,7 +354,8 @@ class ClaudeClient:
         if not places:
             return None  # nothing to anchor on — caller's plain road/settlement string reads better
         places_text = "\n".join(
-            f"- {p['name']} ({p['kind']}): {p['distance_m']} m, punkt on sellest {p['direction']}"
+            f"- {p['name']} ({_PLACE_KINDS_ET.get(p['kind'], p['kind'])}): "
+            f"{p['distance_m']} m, punkt on sellest {p['direction']}"
             for p in places
         ) or "-"
         prompt = LOCATION_PROMPT.format(road=road or "-", admin=admin or "-", places=places_text)
@@ -325,13 +363,15 @@ class ClaudeClient:
             text = await self._call(
                 [{"type": "text", "text": "Vasta ainult asukohatekstiga."}],
                 [{"role": "user", "content": prompt}],
-                max_tokens=60,
+                max_tokens=80,
             )
         except Exception:
             logger.warning("Location description failed", exc_info=True)
             return None
         text = text.strip().strip('"').strip().rstrip(".")
-        return text[:80] or None
+        if not text:
+            return None
+        return _ensure_settlement(text, road, admin, places)[:100]
 
     async def check_duplicate(self, new_raw: str, existing: Event) -> bool:
         existing_summary = f"{existing.title or ''} {existing.description or ''} {existing.location or ''}".strip()
