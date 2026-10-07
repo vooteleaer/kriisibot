@@ -106,8 +106,11 @@ Reeglid:
 - Kasuta AINULT allpool antud nimesid — ära leiuta teid, kohti ega objekte.
 - Kirjeldus peab sisaldama asulaga seotud viidet, sest objekti või tee nimi üksi ei ütle kohalikule, kus see on. Sobib üks järgmistest: asula, mille sees punkt asub; kaugus ja suund lähima asula suhtes; või kui lähedasi asulaid pole antud, siis haldusüksus (vald).
 - Kirjuta tee nimi TÄPSELT nii, nagu see on antud (ära lisa "tee", "tn" vms).
-- Asula sees (lähim asula alla ~1 km): kui kuni ~300 m kaugusel on tuntud objekt, kasuta seda koos objekti tüübi ja asulaga: "Sõpruse pst, Circle K tankla juures, Tartu", "Jõhvi-Tartu-Valga tee, Postkontori bussipeatuse juures, Jõhvi". Ära kasuta objekti nime ilma tüübita (bussipeatus, pood, kool jne). Tuntud objekti puudumisel kirjuta "<tee>, <asula>" (asula nimetavas käändes, nt "Riia, Tartu kesklinn").
-- Maanteel asulate vahel kirjelda kaugus ja suund lähima asula suhtes, asula seestütlevas käändes: "Meremõisa rannatee, 1,5 km Meremõisast läänes", "Tallinn-Tartu-Võru-Luhamaa tee, 2,3 km Kosest lõunas".
+- Asula sees olekut hinda haldusüksuse esimese nime järgi (see on asula, mille piires punkt asub), \
+mitte kauguse järgi asula keskpunktist — linnas võib punkt olla keskpunktist mitme km kaugusel.
+- Kui punkt on linnas või alevis, ära kirjelda kaugust selle keskpunktist.
+- Asula sees: kui kuni ~300 m kaugusel on tuntud objekt, kasuta seda koos objekti tüübi ja asulaga: "Sõpruse pst, Circle K tankla juures, Tartu", "Jõhvi-Tartu-Valga tee, Postkontori bussipeatuse juures, Jõhvi". Ära kasuta objekti nime ilma tüübita (bussipeatus, pood, kool jne). Tuntud objekti puudumisel kirjuta "<tee>, <asula>" (asula nimetavas käändes, nt "Riia, Tartu kesklinn").
+- Maanteel asulate vahel (haldusüksus on küla või vald) kirjelda kaugus ja suund lähima asula suhtes, asula seestütlevas käändes: "Meremõisa rannatee, 1,5 km Meremõisast läänes", "Tallinn-Tartu-Võru-Luhamaa tee, 2,3 km Kosest lõunas".
 - Kaugus ümarda 100 m täpsusega (alla 1 km meetrites, muidu km ühe komakohaga).
 - Vasta AINULT asukohatekstiga, ilma jutumärkide, lõpupunkti ja selgitusteta.
 
