@@ -105,7 +105,7 @@ mille järgi kohalik inimene koha kohe ära tunneb.
 Reeglid:
 - Kasuta AINULT allpool antud nimesid — ära leiuta teid, kohti ega objekte.
 - Kirjeldus peab sisaldama asulaga seotud viidet, sest objekti või tee nimi üksi ei ütle kohalikule, kus see on. Sobib üks järgmistest: asula, mille sees punkt asub; kaugus ja suund lähima asula suhtes; või kui lähedasi asulaid pole antud, siis haldusüksus (vald).
-- Kirjuta tee nimi TÄPSELT nii, nagu see on antud (ära lisa "tee", "tn" vms).
+- Alusta ALATI tee nimega ja kirjuta see TÄPSELT nii, nagu see on antud, koos teenumbriga, kui see on antud.
 - Asula sees olekut hinda haldusüksuse esimese nime järgi (see on asula, mille piires punkt asub), \
 mitte kauguse järgi asula keskpunktist — linnas võib punkt olla keskpunktist mitme km kaugusel.
 - Kui punkt on linnas või alevis, ära kirjelda kaugust selle keskpunktist.
@@ -131,6 +131,19 @@ _PLACE_KINDS_ET = {
     "station": "raudteejaam", "halt": "rongipeatus", "bus_stop": "bussipeatus",
 }
 _SETTLEMENT_KINDS = {"city", "town", "village", "suburb", "neighbourhood", "hamlet"}
+
+
+_ROAD_TYPE_RE = re.compile(
+    r"\b(tee|mnt|maantee|tn|tänav|pst|puiestee|põik|allee|väljak|plats|rada|sild)\b",
+    re.IGNORECASE,
+)
+
+
+def _with_road_type(road: str | None) -> str | None:
+    """OSM gives town streets bare ("Tehase") — add "tn" so the text reads as a road."""
+    if not road or _ROAD_TYPE_RE.search(road):
+        return road
+    return f"{road} tn"
 
 
 def _ensure_settlement(text: str, road: str | None, admin: str | None, places: list[dict]) -> str:
@@ -361,6 +374,7 @@ class ClaudeClient:
             f"{p['distance_m']} m, punkt on sellest {p['direction']}"
             for p in places
         ) or "-"
+        road = _with_road_type(road)
         prompt = LOCATION_PROMPT.format(road=road or "-", admin=admin or "-", places=places_text)
         try:
             text = await self._call(
