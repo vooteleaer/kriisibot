@@ -99,8 +99,10 @@ Raport:
 """
 
 ELATIVE_PROMPT = """\
-Kirjuta eesti kohanimi seestütlevas käändes (kust?), nt Narva → Narvast, Kose → Kosest, \
-Meremõisa → Meremõisast, Tartu → Tartust.
+Kirjuta eesti kohanimi seestütlevas käändes — vastab küsimusele "kust?" ja lõpeb -st \
+(mõnel kohanimel -lt). NB! Mitte osastav (keda? mida?).
+Näited: Narva → Narvast, Pärnu → Pärnust, Kose → Kosest, Meremõisa → Meremõisast, \
+Tallinn → Tallinnast, Kohtla-Järve → Kohtla-Järvelt.
 Vasta AINULT käändes nimega.
 
 {name}
@@ -311,8 +313,15 @@ class ClaudeClient:
             logger.warning("Elative for %r failed", name, exc_info=True)
             return None
         text = text.strip().strip('"').strip().rstrip(".")
-        # Guard against chatter: the answer must be one word-ish form of the same name
-        if not text or len(text) > len(name) + 4 or text[:2].lower() != name[:2].lower():
+        # Guard against chatter and wrong cases ("Pärnut" is partitive): the answer must be
+        # the same name with an elative-style ending
+        if (
+            not text
+            or len(text) > len(name) + 4
+            or text[:2].lower() != name[:2].lower()
+            or not text.endswith(("st", "lt"))
+        ):
+            logger.warning("Rejected elative %r for %r", text, name)
             return None
         return text
 
